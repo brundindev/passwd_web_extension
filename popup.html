@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>PASSWD Extension</title>
+  <script src="popup.js" defer></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+      width: 350px;
+      padding: 16px;
+      margin: 0;
+      background-color: #212121;
+      color: #fff;
+    }
+    h1 {
+      font-size: 18px;
+      color: #fff;
+      margin-bottom: 15px;
+      text-align: center;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+    p {
+      font-size: 14px;
+      color: #aaa;
+      margin-bottom: 10px;
+    }
+    .status {
+      padding: 10px;
+      border-radius: 8px;
+      margin-top: 10px;
+      text-align: center;
+      font-size: 14px;
+      transition: all 0.3s ease;
+    }
+    .success {
+      background-color: #0d3e1a;
+      color: #63e884;
+      border: 1px solid #106b2c;
+    }
+    .warning {
+      background-color: #3e350d;
+      color: #e8d163;
+      border: 1px solid #6b5910;
+    }
+    .error {
+      background-color: #3e0d0d;
+      color: #e86363;
+      border: 1px solid #6b1010;
+    }
+    button {
+      background-color: #4285F4;
+      color: white;
+      padding: 12px 16px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      width: 100%;
+      margin-top: 15px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      font-size: 14px;
+      transition: all 0.2s ease;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+    }
+    button:hover {
+      background-color: #5294FF;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);
+      transform: translateY(-1px);
+    }
+    #accountsList {
+      margin-top: 15px;
+      max-height: 350px;
+      overflow-y: auto;
+      border: 1px solid #444;
+      border-radius: 8px;
+      padding: 0;
+    }
+    #accountsList::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    #accountsList::-webkit-scrollbar-track {
+      background: #333;
+      border-radius: 8px;
+    }
+    #accountsList::-webkit-scrollbar-thumb {
+      background-color: #555;
+      border-radius: 8px;
+    }
+    .account-item {
+      padding: 12px 16px;
+      margin-bottom: 0;
+      background-color: #333;
+      border-bottom: 1px solid #444;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .account-item:first-child {
+      border-radius: 8px 8px 0 0;
+    }
+    .account-item:last-child {
+      border-bottom: none;
+      border-radius: 0 0 8px 8px;
+      margin-bottom: 0;
+    }
+    .account-info {
+      flex-grow: 1;
+      overflow: hidden;
+    }
+    .account-username {
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 3px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .account-site {
+      font-size: 12px;
+      color: #aaa;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .use-button {
+      background-color: #4285F4;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 6px 12px;
+      cursor: pointer;
+      margin-left: 10px;
+      margin-top: 0 !important;
+      font-size: 12px;
+      font-weight: 500;
+      width: auto !important;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      transition: background-color 0.2s ease;
+    }
+    .use-button:hover {
+      background-color: #5294FF;
+      transform: none;
+    }
+    .loader {
+      border: 3px solid #333;
+      border-top: 3px solid #4285F4;
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      animation: spin 1.5s linear infinite;
+      margin: 15px auto;
+      display: none;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .site-info {
+      background-color: #333;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 15px;
+      display: flex;
+      align-items: center;
+      border: 1px solid #444;
+    }
+    .site-icon {
+      width: 20px;
+      height: 20px;
+      margin-right: 10px;
+      background-color: #4285F4;
+      border-radius: 4px;
+      padding: 3px;
+    }
+    #currentSite {
+      font-weight: 600;
+      color: #fff;
+    }
+    .no-accounts {
+      text-align: center;
+      color: #aaa;
+      font-style: italic;
+      padding: 20px;
+    }
+  </style>
+</head>
+<body>
+  <h1>PASSWD Extension</h1>
+  
+  <div class="site-info">
+    <img src="icons/logo_passwd.JPEG" class="site-icon" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2216%22 height=%2216%22><rect width=%2216%22 height=%2216%22 fill=%22%234285F4%22 /><text x=%228%22 y=%2212%22 font-size=%2212%22 text-anchor=%22middle%22 fill=%22white%22>P</text></svg>'">
+    <span>Sitio actual: <span id="currentSite">Cargando...</span></span>
+  </div>
+  
+  <div id="statusContainer">
+    <div id="status" class="status"></div>
+    <div class="loader" id="loader"></div>
+  </div>
+  
+  <div id="accountsList">
+    <!-- Las cuentas se cargarán aquí dinámicamente -->
+  </div>
+  
+  <button id="searchButton">Buscar Credenciales</button>
+</body>
+</html>
