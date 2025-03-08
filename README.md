@@ -1,6 +1,6 @@
 <h1 align="center">
   <br>
-  <a href="#"><img src="assets/logo_passwd.JPEG" alt="Gestor de Contraseñas" width="200"></a>
+  <a href="#"><img src="icons/logo_passwd.JPEG" alt="Gestor de Contraseñas" width="200"></a>
   <br>
   🔐 Gestor de Contraseñas - PASSWD Extension Web
   <br>
