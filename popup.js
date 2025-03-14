@@ -283,22 +283,57 @@ document.addEventListener('DOMContentLoaded', function() {
       const baseDomain = getBaseDomain(dominio);
       console.log(`Filtrando credenciales para dominio: ${dominio} (base: ${baseDomain})`);
       
-      // Caso especial para Google
+      // Casos especiales para dominios conocidos
       const isGoogle = baseDomain.includes('google') || dominio.includes('google');
+      const isBBVA = baseDomain.includes('bbva') || dominio.includes('bbva');
+      
+      // Lista de dominios que necesitan tratamiento especial
+      const dominiosEspeciales = {
+        'bbva': ['bbva', 'bancomer', 'bbvanet', 'bbva.es', 'bbva.com'],
+        'google': ['google', 'gmail', 'youtube'],
+        'microsoft': ['microsoft', 'outlook', 'hotmail', 'live', 'office365'],
+        'apple': ['apple', 'icloud', 'me.com']
+      };
+      
+      // Buscar si el dominio actual pertenece a algún grupo especial
+      let grupoEspecial = null;
+      for (const [grupo, dominios] of Object.entries(dominiosEspeciales)) {
+        if (dominios.some(d => baseDomain.includes(d) || dominio.includes(d))) {
+          grupoEspecial = grupo;
+          console.log(`El dominio ${dominio} pertenece al grupo especial: ${grupoEspecial}`);
+          break;
+        }
+      }
       
       return credenciales.filter(cred => {
         if (!cred.sitio) return false;
         
         const credDomain = getBaseDomain(cred.sitio);
+        let match = false;
         
-        // Para Google, ser más permisivo
-        if (isGoogle && (credDomain.includes('google') || cred.sitio.includes('google'))) {
-          console.log(`Coincidencia de Google: ${cred.usuario} para ${cred.sitio}`);
-          return true;
+        // Caso 1: Es un dominio especial (como Google o BBVA)
+        if (grupoEspecial) {
+          // Verificar si la credencial pertenece al mismo grupo especial
+          const dominiosDelGrupo = dominiosEspeciales[grupoEspecial];
+          match = dominiosDelGrupo.some(d => 
+            credDomain.includes(d) || cred.sitio.includes(d)
+          );
+          
+          if (match) {
+            console.log(`Coincidencia de grupo ${grupoEspecial}: ${cred.usuario} para ${cred.sitio}`);
+            return true;
+          }
         }
         
-        // Coincidencia normal por dominio base
-        const match = credDomain === baseDomain;
+        // Caso 2: Coincidencia exacta por dominio base (el comportamiento original)
+        match = credDomain === baseDomain;
+        
+        // Caso 3: Coincidencia parcial (más flexible)
+        if (!match) {
+          // Si el dominio base está contenido en el dominio de la credencial o viceversa
+          match = credDomain.includes(baseDomain) || baseDomain.includes(credDomain);
+        }
+        
         if (match) {
           console.log(`Credencial coincidente: ${cred.usuario} para ${cred.sitio} (${credDomain})`);
         }
@@ -316,8 +351,33 @@ document.addEventListener('DOMContentLoaded', function() {
     try {
       if (!dominio) return '';
       
+      // Convertir a minúsculas para normalización
+      let domain = dominio.toLowerCase();
+      
+      // Manejar casos especiales conocidos primero
+      const dominiosConocidos = {
+        'bbva.com': 'bbva',
+        'bancomer.com': 'bbva',
+        'bbva.es': 'bbva', 
+        'bbvanet.com': 'bbva',
+        'bbva.mx': 'bbva',
+        'google.com': 'google',
+        'gmail.com': 'google',
+        'youtube.com': 'google'
+      };
+      
+      // Verificar si el dominio contiene alguno de los dominios conocidos
+      for (const [conocido, base] of Object.entries(dominiosConocidos)) {
+        if (domain.includes(conocido)) {
+          console.log(`Dominio conocido detectado: ${domain} -> ${base}`);
+          return base;
+        }
+      }
+      
+      // Si no es un dominio conocido, proceder con el algoritmo normal
+      
       // Eliminar protocolo
-      let domain = dominio.replace(/^(https?:\/\/)?(www\.)?/i, '');
+      domain = domain.replace(/^(https?:\/\/)?(www\.)?/i, '');
       
       // Eliminar ruta y parámetros
       domain = domain.split('/')[0];
@@ -325,8 +385,12 @@ document.addEventListener('DOMContentLoaded', function() {
       // Dividir por puntos
       const parts = domain.split('.');
       
-      // Dominios de segundo nivel específicos
-      const secondLevelDomains = ['co.uk', 'com.br', 'com.mx', 'com.ar', 'com.co'];
+      // Lista ampliada de dominios de segundo nivel específicos
+      const secondLevelDomains = [
+        'co.uk', 'com.br', 'com.mx', 'com.ar', 'com.co', 
+        'com.au', 'co.nz', 'co.jp', 'or.jp', 'co.in', 
+        'com.sg', 'com.hk', 'org.uk', 'net.au'
+      ];
       
       if (parts.length > 2) {
         const lastTwoParts = parts.slice(-2).join('.');
@@ -335,13 +399,14 @@ document.addEventListener('DOMContentLoaded', function() {
           return parts.slice(-3).join('.');
         }
         
-        // Casos normales: tomar los últimos dos segmentos
+        // Para dominios normales, tomar solo los últimos dos segmentos
         return parts.slice(-2).join('.');
       }
       
+      // Si solo hay dos partes o menos, devolver el dominio completo
       return domain;
     } catch (e) {
-      console.error('Error al extraer dominio base:', e);
+      console.error('Error al obtener dominio base:', e);
       return dominio || '';
     }
   }
@@ -538,6 +603,59 @@ document.addEventListener('DOMContentLoaded', function() {
     loader.style.display = show ? 'block' : 'none';
   }
   
+  // Función para probar la conexión al servidor
+  // Similar a checkConnection pero diseñada específicamente para ser llamada dentro de searchCredentials
+  async function testServerConnection() {
+    try {
+      console.log('Verificando conexión con el servidor PASSWD...');
+      
+      // Primero intentar con endpoint /status
+      try {
+        const statusUrl = 'http://localhost:8080/status';
+        console.log('Probando endpoint status:', statusUrl);
+        
+        const statusResponse = await fetch(statusUrl, {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' },
+          mode: 'cors'
+        });
+        
+        if (statusResponse.ok) {
+          console.log('Servidor respondió correctamente a /status');
+          return true;
+        }
+      } catch (statusError) {
+        console.log('Error con endpoint /status, probando alternativa:', statusError);
+      }
+      
+      // Si /status falla, intentar con endpoint de credenciales de prueba
+      const testUrl = 'http://localhost:8080/get-credentials?sitio=test';
+      console.log('Probando endpoint credenciales:', testUrl);
+      
+      const response = await fetch(testUrl, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        mode: 'cors'
+      });
+      
+      console.log('Respuesta recibida:', response);
+      
+      if (response.status === 404) {
+        console.log('Servidor respondió con 404 - Esto es esperado para el sitio de prueba');
+        return true;
+      } else if (response.ok) {
+        console.log('Servidor respondió correctamente');
+        return true;
+      } else {
+        console.log('Servidor respondió con estado:', response.status);
+        return false;
+      }
+    } catch (error) {
+      console.error('Error al comprobar la conexión:', error);
+      return false;
+    }
+  }
+  
   // Función para mostrar mensajes de estado
   function showStatus(message, type) {
     const statusDiv = document.getElementById('status');
@@ -562,5 +680,93 @@ document.addEventListener('DOMContentLoaded', function() {
       statusDiv.style.color = '#e86363';
       statusDiv.style.border = '1px solid #6b1010';
     }
+  }
+  
+  // Función para buscar credenciales en varios endpoints
+  async function searchCredentialsWithEndpoints(searchTerm) {
+    console.log(`Buscando credenciales para: ${searchTerm}`);
+    
+    // Definir diferentes endpoints para intentar
+    const endpoints = [
+      // Endpoint principal: búsqueda por sitio
+      {
+        url: `http://localhost:8080/get-credentials?sitio=${encodeURIComponent(searchTerm)}`,
+        method: 'GET'
+      },
+      // Endpoint alternativo: podría ser una API de búsqueda (si existe)
+      {
+        url: `http://localhost:8080/api/search`,
+        method: 'POST',
+        body: JSON.stringify({ term: searchTerm }),
+        headers: { 'Content-Type': 'application/json' }
+      }
+    ];
+    
+    let lastError = null;
+    
+    // Intentar cada endpoint hasta encontrar uno que funcione
+    for (const endpoint of endpoints) {
+      try {
+        console.log(`Intentando con endpoint: ${endpoint.url}`);
+        
+        const fetchOptions = {
+          method: endpoint.method,
+          headers: endpoint.headers || { 'Content-Type': 'application/json' },
+          mode: 'cors'
+        };
+        
+        // Añadir body si es POST
+        if (endpoint.method === 'POST' && endpoint.body) {
+          fetchOptions.body = endpoint.body;
+        }
+        
+        const response = await fetch(endpoint.url, fetchOptions);
+        
+        console.log(`Respuesta del servidor: ${response.status} ${response.statusText}`);
+        
+        if (response.ok) {
+          const data = await response.json();
+          console.log('Datos recibidos:', data);
+          
+          // Verificar formato de los datos y extraer credenciales
+          if (data.credenciales && Array.isArray(data.credenciales)) {
+            console.log(`Se encontraron ${data.credenciales.length} credenciales en formato estándar`);
+            return data.credenciales;
+          } else if (Array.isArray(data)) {
+            console.log(`Se encontraron ${data.length} credenciales en formato array`);
+            return data;
+          } else if (data.items && Array.isArray(data.items)) {
+            console.log(`Se encontraron ${data.items.length} credenciales en formato items`);
+            return data.items;
+          } else {
+            console.log('Respuesta con formato desconocido:', data);
+            // Continuar con el siguiente endpoint
+          }
+        } else if (response.status === 404) {
+          console.log('No se encontraron credenciales (404)');
+          // Solo continuar si es el primer endpoint
+          if (endpoint === endpoints[0]) {
+            lastError = 'No se encontraron credenciales para este sitio';
+          } else {
+            return []; // Si es otro endpoint, ya sabemos que no hay credenciales
+          }
+        } else {
+          console.log(`Error del servidor: ${response.status}`);
+          lastError = `Error del servidor: ${response.status}`;
+          // Continuar con el siguiente endpoint
+        }
+      } catch (error) {
+        console.error(`Error al buscar credenciales en ${endpoint.url}:`, error);
+        lastError = error.message;
+        // Continuar con el siguiente endpoint
+      }
+    }
+    
+    // Si llegamos aquí, ningún endpoint funcionó
+    if (lastError) {
+      console.error('Error al buscar credenciales:', lastError);
+    }
+    
+    return []; // Devolver array vacío si no se encontraron credenciales
   }
 });

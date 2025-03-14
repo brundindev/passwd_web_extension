@@ -1191,9 +1191,20 @@ function sendMessageSafely(message) {
   });
 }
 
-// Detectar cuando el contexto se invalida
-window.addEventListener('unload', () => {
+// Detectar cuando el contexto se invalida usando eventos compatibles con políticas de seguridad
+// No usamos 'unload' porque está bloqueado en muchos sitios como Google
+window.addEventListener('pagehide', () => {
+  console.log('Evento pagehide detectado, marcando contexto como inválido');
   extensionContextValid = false;
+});
+
+// También usamos visibilitychange como respaldo
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    console.log('Página oculta, preparando para posible descarga');
+    // No marcamos como inválido inmediatamente ya que el usuario puede volver a la pestaña
+    // Pero registramos el evento por si acaso
+  }
 });
 
 // Función para reinicializar el contexto periódicamente
@@ -1248,34 +1259,404 @@ function requestCredentials() {
   });
 }
 
-// Inicialización
-function initialize() {
-  try {
-    // Verificar conexión
-    if (checkExtensionConnection()) {
-      // Añadir estilos
-      addStyleSafely();
+// Función para detectar envíos de formularios y ofrecer guardar credenciales
+function detectarEnvioFormularios() {
+  logMessage('Configurando detector de envíos de formularios', 'info');
+  
+  // Escuchar eventos de envío de formularios
+  document.addEventListener('submit', async function(event) {
+    try {
+      // Solo procesamos formularios que probablemente sean de login/registro
+      const form = event.target;
+      logMessage(`Formulario enviado: ${form.id || form.name || 'sin nombre'}`, 'debug');
       
-      // Configurar intervalo de verificación
-      setupContextCheckInterval();
-      
-      // Notificar que estamos listos
-      setTimeout(notifyReady, 1000);
-      
-      // Añadir iconos cuando la página esté completa
-      if (document.readyState === 'complete') {
-        setTimeout(añadirIconosACamposLogin, 1500);
-      } else {
-        window.addEventListener('load', () => {
-          setTimeout(añadirIconosACamposLogin, 1500);
-        });
+      // Buscamos campos de contraseña en el formulario
+      const passwordFields = form.querySelectorAll('input[type="password"]');
+      if (passwordFields.length === 0) {
+        logMessage('Ignorando formulario - no contiene campos de contraseña', 'debug');
+        return; // No es un formulario con contraseña
       }
+      
+      // Buscamos campos de usuario (email, text, etc.)
+      const userFields = form.querySelectorAll('input[type="email"], input[type="text"]');
+      if (userFields.length === 0) {
+        logMessage('Ignorando formulario - no contiene campos de usuario', 'debug');
+        return; // No encontramos campo de usuario
+      }
+      
+      // Esperamos un poco para que el formulario se envíe
+      setTimeout(async () => {
+        try {
+          // Obtenemos los valores de los campos
+          const passwordValue = passwordFields[0].value;
+          
+          if (!passwordValue) {
+            logMessage('Ignorando formulario - el campo de contraseña está vacío', 'debug');
+            return;
+          }
+          
+          // Intentamos encontrar el campo de usuario más probable (primero email, luego otros)
+          let userValue = '';
+          let userField = null;
+          
+          for (const field of userFields) {
+            // Priorizamos campos con nombres comunes para usuarios
+            const name = (field.name || '').toLowerCase();
+            const id = (field.id || '').toLowerCase();
+            const placeholder = (field.placeholder || '').toLowerCase();
+            
+            const isLikelyUsername = 
+              name.includes('user') || name.includes('email') || name.includes('login') || 
+              id.includes('user') || id.includes('email') || id.includes('login') ||
+              placeholder.includes('user') || placeholder.includes('email') || placeholder.includes('login');
+            
+            // Solo consideramos campos con valor
+            if (isLikelyUsername && field.value) {
+              userValue = field.value;
+              userField = field;
+              logMessage(`Campo de usuario detectado: ${name || id || 'sin nombre'}`, 'debug');
+              break;
+            }
+          }
+          
+          // Si no encontramos valor de usuario por heurística, tomamos el primer campo con valor
+          if (!userValue) {
+            for (const field of userFields) {
+              if (field.value) {
+                userValue = field.value;
+                userField = field;
+                logMessage(`Usando primer campo con valor como usuario: ${field.name || field.id || 'sin nombre'}`, 'debug');
+                break;
+              }
+            }
+          }
+          
+          // Si tenemos usuario y contraseña, mostramos el diálogo
+          if (userValue && passwordValue) {
+            // Obtenemos el dominio del sitio web actual
+            const sitioWeb = window.location.hostname;
+            logMessage(`Detectado envío de credenciales en ${sitioWeb}: Usuario=${userValue}, Contraseña=********`, 'info');
+            
+            // Mostramos el diálogo para guardar
+            mostrarDialogoGuardarCredenciales(sitioWeb, userValue, passwordValue);
+          } else {
+            logMessage('No se pudo determinar el usuario o la contraseña del formulario', 'warn');
+          }
+        } catch (error) {
+          logMessage(`Error al procesar formulario: ${error.message}`, 'error');
+        }
+      }, 500); // Esperamos 500ms para que el formulario se envíe primero
+    } catch (e) {
+      logMessage(`Error en el detector de formularios: ${e.message}`, 'error');
+    }
+  });
+}
+
+// Función para mostrar el diálogo preguntando si quiere guardar las credenciales
+function mostrarDialogoGuardarCredenciales(sitio, usuario, password) {
+  // Comprobamos si ya existe un diálogo abierto y lo eliminamos
+  const dialogoExistente = document.querySelector('.passwd-guardar-dialogo');
+  if (dialogoExistente) {
+    dialogoExistente.remove();
+  }
+  
+  // Creamos el diálogo
+  const dialogo = document.createElement('div');
+  dialogo.className = 'passwd-guardar-dialogo';
+  
+  // Estilo del diálogo con animación de entrada
+  dialogo.style.cssText = `
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    width: 320px;
+    background-color: #212121;
+    color: #fff;
+    border: 1px solid #444;
+    border-radius: 8px;
+    padding: 16px;
+    box-shadow: 0 8px 25px rgba(0,0,0,0.6);
+    z-index: 2147483647;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+    animation: passwd-dialog-fade-in 0.3s ease-out;
+  `;
+  
+  // Contenido del diálogo
+  dialogo.innerHTML = `
+    <style>
+      @keyframes passwd-dialog-fade-in {
+        from { opacity: 0; transform: translateY(-20px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .passwd-guardar-titulo {
+        font-size: 16px;
+        font-weight: 600;
+        margin-bottom: 10px;
+        display: flex;
+        align-items: center;
+      }
+      .passwd-guardar-icono {
+        width: 20px;
+        height: 20px;
+        margin-right: 8px;
+        background-color: #4285F4;
+        border-radius: 4px;
+        padding: 2px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .passwd-guardar-info {
+        margin-bottom: 12px;
+        font-size: 14px;
+        color: #aaa;
+      }
+      .passwd-guardar-datos {
+        background-color: #333;
+        border-radius: 6px;
+        padding: 10px;
+        margin-bottom: 16px;
+        font-size: 13px;
+      }
+      .passwd-guardar-dato {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 6px;
+      }
+      .passwd-guardar-dato:last-child {
+        margin-bottom: 0;
+      }
+      .passwd-guardar-etiqueta {
+        color: #aaa;
+      }
+      .passwd-guardar-valor {
+        color: #fff;
+        font-weight: 500;
+        max-width: 180px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .passwd-guardar-botones {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+      }
+      .passwd-guardar-boton {
+        padding: 8px 16px;
+        border-radius: 4px;
+        border: none;
+        font-weight: 600;
+        cursor: pointer;
+        font-size: 13px;
+        transition: all 0.2s ease;
+      }
+      .passwd-guardar-boton-cancelar {
+        background-color: #333;
+        color: #aaa;
+      }
+      .passwd-guardar-boton-cancelar:hover {
+        background-color: #444;
+        color: #fff;
+      }
+      .passwd-guardar-boton-guardar {
+        background-color: #4285F4;
+        color: white;
+      }
+      .passwd-guardar-boton-guardar:hover {
+        background-color: #5294FF;
+      }
+    </style>
+    <div class="passwd-guardar-titulo">
+      <div class="passwd-guardar-icono">P</div>
+      Guardar en PASSWD
+    </div>
+    <div class="passwd-guardar-info">
+      ¿Quieres guardar estas credenciales en tu gestor PASSWD?
+    </div>
+    <div class="passwd-guardar-datos">
+      <div class="passwd-guardar-dato">
+        <span class="passwd-guardar-etiqueta">Sitio:</span>
+        <span class="passwd-guardar-valor">${sitio}</span>
+      </div>
+      <div class="passwd-guardar-dato">
+        <span class="passwd-guardar-etiqueta">Usuario:</span>
+        <span class="passwd-guardar-valor">${usuario}</span>
+      </div>
+      <div class="passwd-guardar-dato">
+        <span class="passwd-guardar-etiqueta">Contraseña:</span>
+        <span class="passwd-guardar-valor">••••••••</span>
+      </div>
+    </div>
+    <div class="passwd-guardar-botones">
+      <button class="passwd-guardar-boton passwd-guardar-boton-cancelar">Cancelar</button>
+      <button class="passwd-guardar-boton passwd-guardar-boton-guardar">Guardar</button>
+    </div>
+  `;
+  
+  // Añadimos el diálogo al DOM
+  document.body.appendChild(dialogo);
+  
+  // Configuramos los eventos de los botones
+  const botonCancelar = dialogo.querySelector('.passwd-guardar-boton-cancelar');
+  const botonGuardar = dialogo.querySelector('.passwd-guardar-boton-guardar');
+  
+  // Auto-cerrar después de 30 segundos
+  const timeoutId = setTimeout(() => {
+    if (document.body.contains(dialogo)) {
+      dialogo.remove();
+    }
+  }, 30000);
+  
+  // Evento para cancelar
+  botonCancelar.addEventListener('click', () => {
+    clearTimeout(timeoutId);
+    dialogo.remove();
+  });
+  
+  // Evento para guardar
+  botonGuardar.addEventListener('click', () => {
+    clearTimeout(timeoutId);
+    
+    // Animación de salida antes de eliminar
+    dialogo.style.animation = 'passwd-dialog-fade-out 0.3s ease-out forwards';
+    dialogo.addEventListener('animationend', () => {
+      dialogo.remove();
+    });
+    
+    // Enviamos las credenciales al background script
+    guardarCredenciales(sitio, usuario, password);
+  });
+  
+  // Añadimos animación de salida al CSS
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes passwd-dialog-fade-out {
+      from { opacity: 1; transform: translateY(0); }
+      to { opacity: 0; transform: translateY(-20px); }
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+// Función para enviar las credenciales al background script
+function guardarCredenciales(sitio, usuario, password) {
+  chrome.runtime.sendMessage({
+    accion: 'guardar_credenciales',
+    credencial: {
+      sitio: sitio,
+      usuario: usuario,
+      password: password
+    }
+  })
+  .then(response => {
+    logMessage(`Respuesta al guardar credenciales: ${JSON.stringify(response)}`, 'info');
+    if (response && response.success) {
+      mostrarNotificacionGuardado(true);
     } else {
-      console.warn('No se pudo establecer conexión inicial, reintentando...');
-      setTimeout(reinitializeExtension, 2000);
+      mostrarNotificacionGuardado(false, response?.error || 'Error desconocido');
+    }
+  })
+  .catch(error => {
+    logMessage(`Error al guardar credenciales: ${error.message}`, 'error');
+    mostrarNotificacionGuardado(false, 'Error de comunicación con la extensión');
+  });
+}
+
+// Función para mostrar notificación de resultado
+function mostrarNotificacionGuardado(exito, mensaje = '') {
+  const notificacion = document.createElement('div');
+  notificacion.className = 'passwd-notificacion';
+  
+  notificacion.style.cssText = `
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    padding: 12px 16px;
+    border-radius: 8px;
+    color: white;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+    font-size: 14px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    z-index: 2147483647;
+    animation: passwd-notif-fade-in 0.3s ease-out;
+  `;
+  
+  if (exito) {
+    notificacion.style.backgroundColor = '#0d3e1a';
+    notificacion.style.border = '1px solid #106b2c';
+    notificacion.innerText = '✓ Credenciales guardadas correctamente';
+  } else {
+    notificacion.style.backgroundColor = '#3e0d0d';
+    notificacion.style.border = '1px solid #6b1010';
+    notificacion.innerText = `✗ Error al guardar: ${mensaje}`;
+  }
+  
+  // Añadimos la notificación al DOM
+  document.body.appendChild(notificacion);
+  
+  // Añadimos animación de entrada y salida
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes passwd-notif-fade-in {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes passwd-notif-fade-out {
+      from { opacity: 1; transform: translateY(0); }
+      to { opacity: 0; transform: translateY(20px); }
+    }
+  `;
+  document.head.appendChild(style);
+  
+  // Auto-eliminar después de 4 segundos
+  setTimeout(() => {
+    notificacion.style.animation = 'passwd-notif-fade-out 0.3s ease-out forwards';
+    notificacion.addEventListener('animationend', () => {
+      notificacion.remove();
+    });
+  }, 4000);
+}
+
+// Función para inicializar los componentes
+function initialize() {
+  // Registrar el script está cargado
+  console.log('PASSWD Content Script inicializado en:', window.location.href);
+  
+  try {
+    // Notificar que está listo lo antes posible
+    notifyReady();
+    
+    // Solicitar credenciales inmediatamente al iniciar
+    setTimeout(() => {
+      if (!credencialesDisponibles || credencialesDisponibles.length === 0) {
+        console.log('Solicitando credenciales al inicializar...');
+        requestCredentials();
+      }
+    }, 1000);
+    
+    // Configurar detección de campos de login lo antes posible
+    añadirIconosACamposLogin();
+    
+    // Configurar un intervalo para verificar nuevos campos que pueden aparecer dinámicamente
+    setInterval(() => {
+      if (extensionContextValid) {
+        añadirIconosACamposLogin();
+      }
+    }, 3000);
+    
+    // Reiniciar la extensión si se detecta un cambio de contexto o error
+    setupContextCheckInterval();
+    
+    // Configurar detector de envío de formularios
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', detectarEnvioFormularios);
+    } else {
+      detectarEnvioFormularios();
     }
   } catch (e) {
-    console.error('Error en la inicialización:', e);
+    console.error('Error durante la inicialización del content script:', e);
+    // En caso de error durante la inicialización, programar un reinicio
     setTimeout(reinitializeExtension, 2000);
   }
 }

@@ -23,18 +23,39 @@ const FLUTTER_SERVER = {
   API_PATH: '/api', // Cambiar esto si la ruta API es diferente en tu servicio Flutter
   SEARCH_ENDPOINT: '/search',
   STATUS_ENDPOINT: '/status',
-  GET_CREDENTIALS_ENDPOINT: '/get-credentials' // Endpoint original que podría estar usando
+  GET_CREDENTIALS_ENDPOINT: '/get-credentials', // Endpoint original que podría estar usando
+  SAVE_CREDENTIAL_ENDPOINT: '/guardar-credencial' // Cambiado a guion para seguir el patrón de get-credentials
 };
 
 // Función para construir URLs del servidor
 function getServerUrl(endpoint, queryParams = {}) {
-  const url = new URL(`http://${FLUTTER_SERVER.HOST}:${FLUTTER_SERVER.PORT}${endpoint}`);
+  // Determinar si hay que incluir el API_PATH
+  let fullEndpoint = endpoint;
+  
+  // Si el endpoint no empieza con / o con el API_PATH, añadir el API_PATH
+  if (!endpoint.startsWith('/')) {
+    fullEndpoint = '/' + endpoint;
+  }
+  
+  // Si el endpoint es uno de los definidos en FLUTTER_SERVER y no comienza ya con API_PATH
+  if (endpoint !== FLUTTER_SERVER.STATUS_ENDPOINT && 
+      !fullEndpoint.startsWith(FLUTTER_SERVER.API_PATH)) {
+    const usesDefinedEndpoint = Object.values(FLUTTER_SERVER).includes(endpoint);
+    
+    if (usesDefinedEndpoint) {
+      fullEndpoint = FLUTTER_SERVER.API_PATH + fullEndpoint;
+      console.log(`Añadiendo API_PATH al endpoint: ${fullEndpoint}`);
+    }
+  }
+  
+  const url = new URL(`http://${FLUTTER_SERVER.HOST}:${FLUTTER_SERVER.PORT}${fullEndpoint}`);
   
   // Añadir parámetros de consulta si existen
   Object.keys(queryParams).forEach(key => {
     url.searchParams.append(key, queryParams[key]);
   });
   
+  console.log(`URL construida: ${url.toString()}`);
   return url.toString();
 }
 
@@ -118,6 +139,124 @@ function guardarCredencialesEnCache(dominio, credenciales) {
   } catch (e) {
     console.error('Error al guardar credenciales en caché:', e);
     return credenciales;
+  }
+}
+
+// Función para guardar nuevas credenciales en el servidor
+async function guardarNuevasCredenciales(credencial) {
+  try {
+    console.log('Guardando nuevas credenciales:', credencial);
+    
+    // Formato esperado por el servidor
+    const datosAGuardar = {
+      sitio: credencial.sitio,
+      usuario: credencial.usuario,
+      password: credencial.password
+    };
+    
+    // URL del servidor para guardar credenciales - construir explícitamente con API_PATH
+    let url;
+    if (FLUTTER_SERVER.API_PATH) {
+      // Usar API_PATH explícitamente si está definido
+      url = `http://${FLUTTER_SERVER.HOST}:${FLUTTER_SERVER.PORT}${FLUTTER_SERVER.API_PATH}/guardar-credencial`;
+      console.log('Construyendo URL con API_PATH explícito:', url);
+    } else {
+      // Usar la función normal si no hay API_PATH
+      url = getServerUrl(FLUTTER_SERVER.SAVE_CREDENTIAL_ENDPOINT);
+    }
+    
+    console.log('Enviando petición a:', url);
+    console.log('Datos a enviar:', JSON.stringify(datosAGuardar));
+    
+    // Primero intentamos hacer un ping al servidor para verificar conexión
+    try {
+      const statusUrl = getServerUrl(FLUTTER_SERVER.STATUS_ENDPOINT);
+      console.log('Verificando estado del servidor en:', statusUrl);
+      
+      const statusResponse = await fetch(statusUrl);
+      console.log('Respuesta de status:', statusResponse.status, statusResponse.statusText);
+      
+      if (statusResponse.ok) {
+        console.log('Servidor está activo y respondiendo');
+        
+        try {
+          // Intentamos obtener más información sobre la estructura de la API
+          const statusData = await statusResponse.json();
+          console.log('Datos de status:', statusData);
+        } catch (parseError) {
+          console.warn('No se pudo parsear la respuesta de status:', parseError);
+        }
+      } else {
+        console.warn('Servidor no responde correctamente al status check');
+      }
+    } catch (pingError) {
+      console.error('Error al hacer ping al servidor:', pingError);
+    }
+    
+    // Probar todas las combinaciones posibles de endpoints
+    const endpointsToTry = [
+      // 1. URL principal construida arriba
+      { url, method: 'POST' },
+      
+      // 2. Con guion como está configurado en FLUTTER_SERVER
+      { url: `http://${FLUTTER_SERVER.HOST}:${FLUTTER_SERVER.PORT}/guardar-credencial`, method: 'POST' },
+      
+      // 3. Con guion bajo (versión alternativa)
+      { url: `http://${FLUTTER_SERVER.HOST}:${FLUTTER_SERVER.PORT}/guardar_credencial`, method: 'POST' },
+      
+      // 4. Con API_PATH y guion
+      { url: `http://${FLUTTER_SERVER.HOST}:${FLUTTER_SERVER.PORT}${FLUTTER_SERVER.API_PATH}/guardar-credencial`, method: 'POST' },
+      
+      // 5. Con API_PATH y guion bajo
+      { url: `http://${FLUTTER_SERVER.HOST}:${FLUTTER_SERVER.PORT}${FLUTTER_SERVER.API_PATH}/guardar_credencial`, method: 'POST' }
+    ];
+    
+    // Iteramos por todas las combinaciones hasta que una funcione
+    let lastError = null;
+    for (const endpoint of endpointsToTry) {
+      try {
+        console.log(`Intentando guardar con: ${endpoint.url}`);
+        
+        const response = await fetch(endpoint.url, {
+          method: endpoint.method,
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(datosAGuardar)
+        });
+        
+        console.log(`Respuesta recibida: ${response.status} ${response.statusText}`);
+        
+        if (response.ok) {
+          const resultado = await response.json();
+          console.log('¡Éxito! Respuesta del servidor:', resultado);
+          
+          // Invalidamos la caché para este dominio para que se actualice
+          const dominio = credencial.sitio;
+          if (credencialesCache.has(dominio)) {
+            console.log(`Invalidando caché para ${dominio} tras guardar nueva credencial`);
+            credencialesCache.delete(dominio);
+          }
+          
+          return { success: true, data: resultado };
+        }
+        
+        // Si no tuvo éxito, guardamos el error y seguimos intentando
+        const errorText = await response.text();
+        lastError = `Error del servidor (${response.status}): ${errorText}`;
+        console.error('Intento fallido:', lastError);
+      } catch (error) {
+        console.error(`Error al intentar con ${endpoint.url}:`, error);
+        lastError = `Error: ${error.message}`;
+      }
+    }
+    
+    // Si llegamos aquí, todos los intentos fallaron
+    console.error('Todos los intentos de guardar credenciales fallaron');
+    return { success: false, error: lastError || 'No se pudo conectar con el servidor' };
+  } catch (error) {
+    console.error('Error al guardar credenciales:', error);
+    return { success: false, error: `Error: ${error.message}` };
   }
 }
 
@@ -336,6 +475,40 @@ chrome.runtime.onMessage.addListener((mensaje, sender, sendResponse) => {
       sendResponse({ error: e.message });
     }
     return true;
+  }
+  
+  // Manejador para guardar nuevas credenciales capturadas del formulario
+  if (mensaje.accion === 'guardar_credenciales') {
+    try {
+      if (!mensaje.credencial) {
+        console.warn('Datos incompletos en guardar_credenciales');
+        sendResponse({ success: false, error: 'No se proporcionaron credenciales' });
+        return true;
+      }
+      
+      const credencial = mensaje.credencial;
+      console.log('Procesando solicitud para guardar nuevas credenciales:', credencial.sitio);
+      
+      // Realizar la petición al servidor para guardar las credenciales
+      guardarNuevasCredenciales(credencial)
+        .then(resultado => {
+          console.log('Resultado de guardar credenciales:', resultado);
+          sendResponse(resultado);
+        })
+        .catch(error => {
+          console.error('Error al guardar credenciales:', error);
+          sendResponse({ 
+            success: false, 
+            error: error.message || 'Error desconocido al guardar credenciales' 
+          });
+        });
+      
+      return true; // Indicar que la respuesta se enviará de forma asíncrona
+    } catch (e) {
+      console.error('Error al procesar guardar_credenciales:', e);
+      sendResponse({ success: false, error: e.message });
+      return true;
+    }
   }
   
   // Si llegamos aquí, no se procesó el mensaje
@@ -558,6 +731,10 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     setTimeout(() => {
       // Forzar inyección del content script
       inyectarContentScript(tabId, tab);
+      
+      // Proactivamente cargar y enviar credenciales para este dominio,
+      // sin esperar a que el content script las solicite
+      precargarCredencialesParaTab(tab);
     }, 500);
   }
 });
@@ -607,69 +784,97 @@ function injectScript(tabId, tab) {
   });
 }
 
-// Verificar si el script está activo después de la inyección
+// Verificar si el content script está listo y enviar credenciales
 function verifyAndSendCredentials(tabId, tab) {
-  try {
-    console.log(`Verificando si el content script está listo en tab ${tabId}`);
-    
-    chrome.tabs.sendMessage(tabId, { accion: 'check_ready' }, (response) => {
-      if (chrome.runtime.lastError) {
-        console.warn(`Content script no listo en tab ${tabId}:`, chrome.runtime.lastError.message);
-        
-        // Si no está listo, intentar inyectarlo
-        injectScript(tabId, tab);
-        return;
-      }
-      
+  // Intentar contactar al content script
+  chrome.tabs.sendMessage(tabId, { accion: 'check_ready' })
+    .then(response => {
       if (response && response.ready) {
-        console.log(`Content script listo en tab ${tabId}, enviando credenciales`);
-        enviarCredencialesCacheadas(tab);
+        console.log(`Content script está listo en tab ${tabId}, enviando credenciales...`);
+        
+        // Enviar credenciales inmediatamente
+        enviarCredencialesAlTab(tabId, tab);
+        
+        // También registrar que el script está listo
+        if (!contentScriptsReady.has(tabId)) {
+          contentScriptsReady.set(tabId, {
+            timestamp: Date.now(),
+            url: tab.url
+          });
+        }
       } else {
-        console.warn(`Respuesta inesperada del content script:`, response);
-        injectScript(tabId, tab);
+        console.log(`Content script respondió pero no está listo en tab ${tabId}`);
+        // Reintentar después de un breve retraso
+        setTimeout(() => verifyAndSendCredentials(tabId, tab), 1000);
       }
+    })
+    .catch(error => {
+      console.error(`Error al verificar si el content script está listo: ${error}`);
+      // Probablemente el content script no está inyectado todavía o no responde
+      // Reintentar menos frecuentemente
+      setTimeout(() => verifyAndSendCredentials(tabId, tab), 2000);
     });
-  } catch (e) {
-    console.error(`Error al verificar si el content script está listo:`, e);
-    injectScript(tabId, tab);
-  }
 }
 
-// Enviar credenciales almacenadas a la pestaña
+// Enviar credenciales al tab, usando caché si está disponible o cargando del servidor
 function enviarCredencialesAlTab(tabId, tab) {
-  if (!tab || !tab.url) return;
-  
   try {
+    if (!tab || !tab.url) {
+      console.warn('Tab inválido para enviar credenciales');
+      return;
+    }
+
     const url = new URL(tab.url);
     const dominio = url.hostname;
     
-    // Primero intentar desde la caché
+    if (!dominio) {
+      console.warn('No se pudo extraer el dominio de:', tab.url);
+      return;
+    }
+    
+    console.log(`📤 Enviando credenciales al tab ${tabId} para dominio: ${dominio}`);
+    
+    // Verificar caché
     if (credencialesCache.has(dominio)) {
-      const cache = credencialesCache.get(dominio);
-      if (Date.now() - cache.timestamp < 5 * 60 * 1000) {
+      const cacheData = credencialesCache.get(dominio);
+      const ahora = Date.now();
+      
+      // Si el caché tiene menos de 15 minutos, usarlo
+      if (ahora - cacheData.timestamp < 15 * 60 * 1000) {
+        console.log(`📋 Usando caché para ${dominio}, enviando ${cacheData.credenciales.length} credenciales`);
+        
+        // Enviar credenciales inmediatamente
         chrome.tabs.sendMessage(tabId, {
           accion: 'set_credentials',
-          credenciales: cache.credenciales
-        }).catch(e => console.log('Error al enviar credenciales desde caché:', e));
+          credenciales: cacheData.credenciales
+        }).catch(e => {
+          console.error('Error al enviar credenciales desde caché:', e);
+        });
+        
         return;
       }
     }
     
-    // Si no hay caché, intentar desde storage local
-    chrome.storage.local.get(dominio, (data) => {
-      if (data && data[dominio] && data[dominio].credenciales) {
-        const esReciente = (Date.now() - data[dominio].timestamp) < 3600000;
+    // No hay caché válida, intentar cargar del servidor y enviar
+    console.log(`🔄 No hay caché para ${dominio}, cargando del servidor...`);
+    obtenerCredenciales(dominio)
+      .then(credenciales => {
+        // Guardar en caché para uso futuro
+        const credencialesFiltradas = guardarCredencialesEnCache(dominio, credenciales);
         
-        if (esReciente) {
-          chrome.tabs.sendMessage(tabId, {
-            accion: 'set_credentials',
-            credenciales: data[dominio].credenciales
-          }).catch(e => console.log('Error al enviar credenciales desde storage:', e));
-        }
-      }
-    });
+        console.log(`📤 Enviando ${credencialesFiltradas.length} credenciales al tab ${tabId}`);
+        
+        // Enviar al content script
+        return chrome.tabs.sendMessage(tabId, {
+          accion: 'set_credentials',
+          credenciales: credencialesFiltradas
+        });
+      })
+      .catch(e => {
+        console.error(`❌ Error al cargar/enviar credenciales: ${e.message}`);
+      });
   } catch (e) {
-    console.log('Error al procesar URL para credenciales:', e);
+    console.error('Error al procesar URL para enviar credenciales:', e);
   }
 }
 
@@ -735,3 +940,49 @@ chrome.action.onClicked.addListener(async (tab) => {
     chrome.action.openPopup();
   }
   });
+
+// Nueva función para precargar credenciales sin esperar solicitud
+async function precargarCredencialesParaTab(tab) {
+  if (!tab || !tab.url) return;
+  
+  try {
+    const url = new URL(tab.url);
+    const dominio = url.hostname;
+    
+    if (!dominio) return;
+    
+    console.log(`🔍 Precargando credenciales para: ${dominio}`);
+    
+    // Verificar si ya tenemos credenciales en caché
+    if (credencialesCache.has(dominio)) {
+      const cacheData = credencialesCache.get(dominio);
+      const ahora = Date.now();
+      
+      // Si el caché es reciente (menos de 15 minutos), usarlo
+      if (ahora - cacheData.timestamp < 15 * 60 * 1000) {
+        console.log(`✓ Usando caché para precargar ${dominio} - ${cacheData.credenciales.length} credenciales`);
+        // Las credenciales se enviarán cuando el content script esté listo
+        return;
+      }
+    }
+    
+    // No hay caché reciente, obtener del servidor en segundo plano
+    console.log(`🔄 Obteniendo credenciales para ${dominio} del servidor...`);
+    obtenerCredenciales(dominio)
+      .then(credenciales => {
+        if (credenciales.length > 0) {
+          console.log(`✅ Precargadas ${credenciales.length} credenciales para ${dominio}`);
+          // Guardar en caché para uso futuro
+          guardarCredencialesEnCache(dominio, credenciales);
+        } else {
+          console.log(`ℹ️ No se encontraron credenciales para ${dominio}`);
+        }
+      })
+      .catch(error => {
+        console.error(`❌ Error al precargar credenciales: ${error.message}`);
+      });
+    
+  } catch (error) {
+    console.error('Error al precargar credenciales:', error);
+  }
+}
