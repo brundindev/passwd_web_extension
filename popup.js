@@ -4,13 +4,153 @@ document.addEventListener('DOMContentLoaded', function() {
   const accountsList = document.getElementById('accountsList');
   const currentSiteElement = document.getElementById('currentSite');
   const loader = document.getElementById('loader');
+  const userEmailElement = document.getElementById('userEmail');
+  const logoutButton = document.getElementById('logoutButton');
   
   let currentTab = null;
   let currentDomain = null;
   let serverStatus = false;
+  let currentUser = null;
   
   // Ocultar la lista de cuentas inicialmente
   accountsList.style.display = 'none';
+  
+  // Cargar la información del usuario actual
+  loadUserInfo();
+  
+  // Añadir evento al botón de cerrar sesión
+  logoutButton.addEventListener('click', function() {
+    logoutUser();
+  });
+  
+  // Función para cargar la información del usuario actual
+  function loadUserInfo() {
+    // Verificar si hay una sesión activa en Firebase
+    try {
+      // Cargar Firebase
+      if (typeof firebase !== 'undefined' && firebase.apps.length > 0) {
+        // Ya está inicializado Firebase
+        checkFirebaseUser();
+      } else {
+        // Cargar Firebase scripts e inicializar
+        const firebaseAppScript = document.createElement('script');
+        firebaseAppScript.src = 'firebase/firebase-app-compat.js';
+        
+        const firebaseAuthScript = document.createElement('script');
+        firebaseAuthScript.src = 'firebase/firebase-auth-compat.js';
+        
+        document.head.appendChild(firebaseAppScript);
+        
+        firebaseAppScript.onload = function() {
+          document.head.appendChild(firebaseAuthScript);
+          
+          firebaseAuthScript.onload = function() {
+            // Inicializar Firebase
+            const firebaseConfig = {
+              apiKey: "AIzaSyDYSZWktCMW2u_pzpYBi_A_ZszwQRyk6ac",
+              authDomain: "passwd-brundindev.firebaseapp.com",
+              projectId: "passwd-brundindev",
+              storageBucket: "passwd-brundindev.firebasestorage.app",
+              messagingSenderId: "252776703139",
+              appId: "1:252776703139:web:60db327548b9f10d564b16"
+            };
+            
+            if (!firebase.apps.length) {
+              firebase.initializeApp(firebaseConfig);
+            }
+            
+            checkFirebaseUser();
+          };
+        };
+      }
+    } catch (error) {
+      console.error('Error al cargar información de usuario:', error);
+      userEmailElement.textContent = 'Error al cargar usuario';
+    }
+  }
+  
+  // Comprobar si hay un usuario autenticado en Firebase
+  function checkFirebaseUser() {
+    firebase.auth().onAuthStateChanged(function(user) {
+      if (user) {
+        // Usuario autenticado
+        currentUser = user;
+        userEmailElement.textContent = user.email;
+        console.log('Usuario autenticado:', user.email);
+      } else {
+        // No hay usuario autenticado
+        userEmailElement.textContent = 'No conectado';
+        console.log('No hay usuario autenticado');
+        
+        // Redirigir a la página de login
+        setTimeout(() => {
+          chrome.action.setPopup({ popup: 'login.html' });
+          window.location.href = 'login.html';
+        }, 500);
+      }
+    });
+  }
+  
+  // Función para cerrar sesión de usuario
+  function logoutUser() {
+    try {
+      showStatus('Cerrando sesión...', 'warning');
+      logoutButton.disabled = true;
+      
+      if (typeof firebase !== 'undefined' && firebase.apps.length > 0) {
+        firebase.auth().signOut().then(function() {
+          // Sign-out exitoso
+          console.log('Sesión cerrada correctamente');
+          
+          // Actualizar storage
+          chrome.storage.local.set({ 'userAuthenticated': false }, function() {
+            // Cambiar al popup de login
+            chrome.action.setPopup({ popup: 'login.html' });
+            
+            // Redirigir a la página de login
+            showStatus('Sesión cerrada correctamente', 'success');
+            setTimeout(() => {
+              window.location.href = 'login.html';
+            }, 1000);
+          });
+        }).catch(function(error) {
+          // Error al cerrar sesión
+          console.error('Error al cerrar sesión:', error);
+          showStatus('Error al cerrar sesión: ' + error.message, 'error');
+          logoutButton.disabled = false;
+        });
+      } else {
+        // Firebase no está disponible, intentar limpiar el storage directamente
+        chrome.storage.local.set({ 'userAuthenticated': false }, function() {
+          chrome.action.setPopup({ popup: 'login.html' });
+          window.location.href = 'login.html';
+        });
+      }
+    } catch (error) {
+      console.error('Error general al cerrar sesión:', error);
+      showStatus('Error al cerrar sesión', 'error');
+      logoutButton.disabled = false;
+    }
+  }
+
+  // También podemos intentar usar el servicio Firebase directamente si está disponible
+  function logoutViaBackgroundService() {
+    chrome.runtime.sendMessage({ action: 'logout_user' }, function(response) {
+      if (chrome.runtime.lastError) {
+        console.error('Error al enviar solicitud de cierre de sesión:', chrome.runtime.lastError);
+        return;
+      }
+      
+      if (response && response.success) {
+        console.log('Sesión cerrada correctamente mediante servicio');
+        // Cambiar al popup de login
+        chrome.action.setPopup({ popup: 'login.html' });
+        window.location.href = 'login.html';
+      } else {
+        console.error('Error al cerrar sesión mediante servicio:', response);
+      }
+    });
+  }
   
   // Escuchar mensajes del background
   chrome.runtime.onMessage.addListener((mensaje) => {

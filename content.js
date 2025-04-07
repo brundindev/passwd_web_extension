@@ -16,6 +16,9 @@ let lastCredentialsCheck = 0;
 let silentMode = false;
 let lastReconnectMessage = 0;
 
+// Variables de configuración
+let DEBUG_MODE = true; // Activar para diagnóstico
+
 // Notificar a la extensión que el content script está listo
 function notifyReady() {
   if (readyMessageSent || initAttempts >= MAX_INIT_ATTEMPTS) return;
@@ -1033,30 +1036,66 @@ chrome.runtime.onMessage.addListener((mensaje, sender, sendResponse) => {
   return true; // Indica que sendResponse se llamará de forma asíncrona
 });
 
-// Función para mostrar logs solo en modo verbose o cuando son importantes
-function logMessage(message, level = 'info', forceShow = false) {
-  // Si estamos en modo silencioso y no es un mensaje forzado, no mostrar
-  if (silentMode && !forceShow) return;
-  
-  // Solo mostrar mensajes de reconexión cada 10 segundos para evitar spam
-  if (message.includes('reconectar') || message.includes('Runtime no disponible')) {
-    const now = Date.now();
-    if (now - lastReconnectMessage < 10000 && !forceShow) return;
-    lastReconnectMessage = now;
-  }
-  
-  switch (level) {
-    case 'error':
-      console.error(message);
-      break;
-    case 'warn':
-      console.warn(message);
-      break;
-    case 'debug':
-      console.debug(message);
-      break;
-    default:
-      console.log(message);
+// Función para registrar mensajes de forma unificada
+function logMessage(message, type = 'info', force = false) {
+  try {
+    if (silentMode && !force && !DEBUG_MODE) {
+      return;
+    }
+    
+    const timestamp = new Date().toLocaleTimeString();
+    const formattedMessage = `🔒 PASSWD: [${timestamp}] ${message}`;
+    
+    if (DEBUG_MODE) {
+      console.log('DEBUG:', formattedMessage);
+    }
+    
+    // Si estamos en modo debug o forzamos el mensaje, mostrarlo
+    if (window.passwdDebugMode || force) {
+      const prefix = '🔒 PASSWD: ';
+      
+      // Agregar un prefijo distintivo para facilitar el filtrado en la consola
+      const formattedMessage = `${prefix}[${timestamp}] ${message}`;
+      
+      // Elegir el método según el tipo
+      switch (type.toLowerCase()) {
+        case 'error':
+          console.error(formattedMessage);
+          break;
+        case 'warn':
+          console.warn(formattedMessage);
+          break;
+        case 'success':
+          console.log('%c' + formattedMessage, 'color: green; font-weight: bold;');
+          break;
+        case 'info':
+        default:
+          console.log('%c' + formattedMessage, 'color: #4285F4;');
+          break;
+      }
+      
+      // Enviar el log también al background script para consolidar registros
+      try {
+        chrome.runtime.sendMessage({
+          action: 'log_message',
+          data: {
+            message: message,
+            type: type,
+            timestamp: new Date().toISOString(),
+            url: window.location.href
+          }
+        }).catch(() => {}); // Ignorar errores en este envío
+      } catch (e) {
+        // Ignorar errores de comunicación al enviar logs
+      }
+    }
+  } catch (e) {
+    // Si hay error en el log, intentar un último mensaje directo
+    try {
+      console.error('PASSWD Error en sistema de logs:', e);
+    } catch (finalError) {
+      // No podemos hacer nada más aquí
+    }
   }
 }
 
@@ -1259,407 +1298,1489 @@ function requestCredentials() {
   });
 }
 
-// Función para detectar envíos de formularios y ofrecer guardar credenciales
+// Función auxiliar para determinar si un input es probablemente un campo de usuario
+function esInputUsuario(input) {
+  try {
+    const idName = (input.id || '').toLowerCase();
+    const name = (input.name || '').toLowerCase();
+    const placeholder = (input.placeholder || '').toLowerCase();
+    const ariaLabel = (input.getAttribute('aria-label') || '').toLowerCase();
+    
+    // Patrones comunes para campos de usuario
+    const patronesUsuario = ['user', 'email', 'login', 'username', 'account', 'correo', 'mail'];
+    
+    for (const patron of patronesUsuario) {
+      if (idName.includes(patron) || name.includes(patron) || 
+          placeholder.includes(patron) || ariaLabel.includes(patron)) {
+        return true;
+      }
+    }
+    
+    return false;
+  } catch (e) {
+    logMessage(`Error al verificar si es campo de usuario: ${e.message}`, 'error', true);
+    return false;
+  }
+}
+
+// Modificación del sistema para detectar envío de formularios
 function detectarEnvioFormularios() {
-  logMessage('Configurando detector de envíos de formularios', 'info');
-  
-  // Escuchar eventos de envío de formularios
-  document.addEventListener('submit', async function(event) {
-    try {
-      // Solo procesamos formularios que probablemente sean de login/registro
-      const form = event.target;
-      logMessage(`Formulario enviado: ${form.id || form.name || 'sin nombre'}`, 'debug');
-      
-      // Buscamos campos de contraseña en el formulario
-      const passwordFields = form.querySelectorAll('input[type="password"]');
-      if (passwordFields.length === 0) {
-        logMessage('Ignorando formulario - no contiene campos de contraseña', 'debug');
-        return; // No es un formulario con contraseña
+  try {
+    // Activar debug para este proceso crítico
+    const DEBUG_MODE = true;
+    logMessage('⚠️ ACTIVANDO DETECCIÓN AGRESIVA DE FORMULARIOS', 'info', DEBUG_MODE);
+    
+    // Variables para seguimiento de credenciales capturadas
+    let credencialesCapturadas = null;
+    let datosCompletos = false;
+    let ultimoFormularioEnviado = null;
+    let ultimoTiempoEnvio = 0;
+    
+    // Variables para seguimiento de campos
+    let campoUsuarioActual = null;
+    let campoPasswordActual = null;
+    
+    // Determinar si el dominio actual es parte de los que queremos auto-guardar
+    const esDominioDeAutoguardado = () => {
+      const dominiosAutoguardado = ['google.com', 'gmail.com', 'outlook.com', 'hotmail.com', 'live.com', 'yahoo.com', 'facebook.com', 'twitter.com', 'instagram.com', 'linkedin.com', 'amazon.com'];
+      const dominio = window.location.hostname;
+      return dominiosAutoguardado.some(d => dominio.includes(d));
+    };
+    
+    // Función para validar datos de credenciales
+    const validarDatosCredenciales = (sitio, usuario, password) => {
+      if (!sitio || !usuario || !password) {
+        logMessage('Datos de credenciales incompletos para validar', 'warn', DEBUG_MODE);
+        return false;
       }
       
-      // Buscamos campos de usuario (email, text, etc.)
-      const userFields = form.querySelectorAll('input[type="email"], input[type="text"]');
-      if (userFields.length === 0) {
-        logMessage('Ignorando formulario - no contiene campos de usuario', 'debug');
-        return; // No encontramos campo de usuario
+      // Verificar que la contraseña no esté vacía
+      if (password.trim() === '') {
+        logMessage('Contraseña vacía, ignorando', 'warn', DEBUG_MODE);
+        return false;
       }
       
-      // Esperamos un poco para que el formulario se envíe
-      setTimeout(async () => {
-        try {
-          // Obtenemos los valores de los campos
-          const passwordValue = passwordFields[0].value;
+      // Verificar longitud de usuario
+      if (usuario.trim().length < 3) {
+        logMessage('Usuario muy corto, podría no ser válido', 'warn', DEBUG_MODE);
+        return false;
+      }
+      
+      logMessage(`Credenciales validadas correctamente para ${sitio}`, 'info', DEBUG_MODE);
+      return true;
+    };
+    
+    // ESTRATEGIA 1: Detectar envíos de formularios con el evento submit
+    logMessage('Configurando detección de envío de formularios (estrategia 1: evento submit)', 'info', DEBUG_MODE);
+    
+    // Capturar todos los formularios en la página
+    const todosLosFormularios = document.querySelectorAll('form');
+    logMessage(`Se detectaron ${todosLosFormularios.length} formularios en la página`, 'info', DEBUG_MODE);
+    
+    // Función para añadir listener a un formulario
+    const añadirListenerFormulario = (formulario, index) => {
+      try {
+        // Solo procesar formularios que no tengan listener ya
+        if (formulario.dataset.passwdProcessed === 'true') {
+          return;
+        }
+        
+        formulario.dataset.passwdProcessed = 'true';
+        formulario.dataset.passwdFormId = `form_${Date.now()}_${index}`;
+        
+        logMessage(`Analizando formulario #${index}: ${formulario.id || formulario.name || 'sin identificador'}`, 'info', DEBUG_MODE);
+        
+        // Verificar si el formulario parece de login
+        const esFormularioLogin = parecerFormularioLogin(formulario);
+        formulario.dataset.passwdLoginForm = esFormularioLogin ? 'true' : 'false';
+        
+        if (esFormularioLogin) {
+          logMessage(`Formulario #${index} detectado como FORMULARIO DE LOGIN`, 'info', DEBUG_MODE);
           
-          if (!passwordValue) {
-            logMessage('Ignorando formulario - el campo de contraseña está vacío', 'debug');
-            return;
-          }
-          
-          // Intentamos encontrar el campo de usuario más probable (primero email, luego otros)
-          let userValue = '';
-          let userField = null;
-          
-          for (const field of userFields) {
-            // Priorizamos campos con nombres comunes para usuarios
-            const name = (field.name || '').toLowerCase();
-            const id = (field.id || '').toLowerCase();
-            const placeholder = (field.placeholder || '').toLowerCase();
+          // Extraer campos
+          const campos = obtenerCamposCredenciales(formulario);
+          if (campos.usuario && campos.password) {
+            logMessage(`Formulario #${index} tiene campos de usuario (${campos.usuario.id || campos.usuario.name || 'sin id'}) y contraseña`, 'info', DEBUG_MODE);
             
-            const isLikelyUsername = 
-              name.includes('user') || name.includes('email') || name.includes('login') || 
-              id.includes('user') || id.includes('email') || id.includes('login') ||
-              placeholder.includes('user') || placeholder.includes('email') || placeholder.includes('login');
+            // Datos para el listener
+            const formInfo = {
+              form: formulario,
+              campoUsuario: campos.usuario,
+              campoPassword: campos.password,
+              id: formulario.dataset.passwdFormId
+            };
             
-            // Solo consideramos campos con valor
-            if (isLikelyUsername && field.value) {
-              userValue = field.value;
-              userField = field;
-              logMessage(`Campo de usuario detectado: ${name || id || 'sin nombre'}`, 'debug');
-              break;
-            }
+            // Agregar listener al evento submit
+            formulario.addEventListener('submit', function(e) {
+              const ahora = Date.now();
+              logMessage(`⚡ EVENTO SUBMIT en formulario ${formInfo.id} a las ${new Date().toISOString()}`, 'info', true);
+              
+              // Evitar procesamiento duplicado (eventos muy cercanos)
+              if (ultimoFormularioEnviado === formInfo.id && ahora - ultimoTiempoEnvio < 2000) {
+                logMessage('Ignorando submit duplicado (mismo formulario en menos de 2s)', 'warn', DEBUG_MODE);
+                return;
+              }
+              
+              // Registrar envío
+              ultimoFormularioEnviado = formInfo.id;
+              ultimoTiempoEnvio = ahora;
+              
+              // Capturar credenciales
+              const sitio = window.location.href;
+              const usuario = formInfo.campoUsuario.value.trim();
+              const password = formInfo.campoPassword.value;
+              
+              logMessage(`Capturadas credenciales en submit: sitio=${sitio}, usuario=${usuario.substring(0, 2)}***`, 'info', DEBUG_MODE);
+              
+              // Validar datos
+              if (validarDatosCredenciales(sitio, usuario, password)) {
+                // Si es un dominio prioritario, guardar automáticamente
+                if (esDominioDeAutoguardado()) {
+                  logMessage(`Dominio en lista de autoguardado: ${window.location.hostname}`, 'info', DEBUG_MODE);
+                  
+                  // Mostrar diálogo con un pequeño retraso para permitir que el formulario se envíe
+                  setTimeout(() => {
+                    mostrarDialogoGuardarCredenciales(sitio, usuario, password);
+                  }, 1000);
+                } else {
+                  // Guardar para posible uso posterior (después de verificar respuesta XHR/fetch)
+                  credencialesCapturadas = { sitio, usuario, password };
+                  datosCompletos = true;
+                  
+                  // En formularios normales, mostrar después de un retraso
+                  setTimeout(() => {
+                    // Si no se ha mostrado por otra estrategia, mostrarlo ahora
+                    logMessage('Mostrando diálogo después de tiempo de espera post-submit', 'info', DEBUG_MODE);
+                    mostrarDialogoGuardarCredenciales(sitio, usuario, password);
+                  }, 2000);
+                }
+              }
+            });
+            
+            logMessage(`Listener de submit agregado a formulario #${index}`, 'info', DEBUG_MODE);
+          } else {
+            logMessage(`Formulario #${index} no tiene campos completos de usuario y/o contraseña`, 'warn', DEBUG_MODE);
           }
+        } else {
+          logMessage(`Formulario #${index} NO parece ser de login`, 'info', DEBUG_MODE);
+        }
+      } catch (formError) {
+        logMessage(`Error al procesar formulario #${index}: ${formError.message}`, 'error', DEBUG_MODE);
+      }
+    };
+    
+    // Procesar formularios existentes
+    todosLosFormularios.forEach(añadirListenerFormulario);
+    
+    // ESTRATEGIA 2: Sobrescribir método submit nativo
+    logMessage('Configurando detección de formularios (estrategia 2: sobrescribir método submit)', 'info', DEBUG_MODE);
+    
+    // Guardar referencia al método submit original
+    const submitOriginal = HTMLFormElement.prototype.submit;
+    
+    // Sobrescribir el método submit
+    HTMLFormElement.prototype.submit = function() {
+      try {
+        logMessage(`⚡ MÉTODO SUBMIT llamado en formulario ${this.id || this.name || 'sin ID'}`, 'info', true);
+        
+        // Verificar si es un formulario de login
+        let esLoginForm = this.dataset.passwdLoginForm === 'true';
+        
+        // Si no tiene la propiedad, verificamos
+        if (this.dataset.passwdLoginForm === undefined) {
+          esLoginForm = parecerFormularioLogin(this);
+          this.dataset.passwdLoginForm = esLoginForm ? 'true' : 'false';
+        }
+        
+        if (esLoginForm) {
+          logMessage('Formulario de login detectado en método submit sobrescrito', 'info', DEBUG_MODE);
           
-          // Si no encontramos valor de usuario por heurística, tomamos el primer campo con valor
-          if (!userValue) {
-            for (const field of userFields) {
-              if (field.value) {
-                userValue = field.value;
-                userField = field;
-                logMessage(`Usando primer campo con valor como usuario: ${field.name || field.id || 'sin nombre'}`, 'debug');
-                break;
+          // Obtener campos
+          const campos = obtenerCamposCredenciales(this);
+          
+          if (campos.usuario && campos.password) {
+            const sitio = window.location.href;
+            const usuario = campos.usuario.value.trim();
+            const password = campos.password.value;
+            
+            logMessage(`Credenciales capturadas en método submit: sitio=${sitio}, usuario=${usuario.substring(0, 2)}***`, 'info', DEBUG_MODE);
+            
+            // Validar y mostrar
+            if (validarDatosCredenciales(sitio, usuario, password)) {
+              // Si es un dominio prioritario, guardar automáticamente
+              if (esDominioDeAutoguardado()) {
+                logMessage(`Dominio en lista de autoguardado (método submit): ${window.location.hostname}`, 'info', DEBUG_MODE);
+                
+                // Programar mostrar diálogo
+                setTimeout(() => {
+                  mostrarDialogoGuardarCredenciales(sitio, usuario, password);
+                }, 1000);
+              } else {
+                // Guardar para uso posterior
+                credencialesCapturadas = { sitio, usuario, password };
+                datosCompletos = true;
+                
+                // En formularios normales, mostrar después de un retraso
+                setTimeout(() => {
+                  logMessage('Mostrando diálogo después de tiempo de espera post-método-submit', 'info', DEBUG_MODE);
+                  mostrarDialogoGuardarCredenciales(sitio, usuario, password);
+                }, 2000);
               }
             }
           }
-          
-          // Si tenemos usuario y contraseña, mostramos el diálogo
-          if (userValue && passwordValue) {
-            // Obtenemos el dominio del sitio web actual
-            const sitioWeb = window.location.hostname;
-            logMessage(`Detectado envío de credenciales en ${sitioWeb}: Usuario=${userValue}, Contraseña=********`, 'info');
-            
-            // Mostramos el diálogo para guardar
-            mostrarDialogoGuardarCredenciales(sitioWeb, userValue, passwordValue);
-          } else {
-            logMessage('No se pudo determinar el usuario o la contraseña del formulario', 'warn');
-          }
-        } catch (error) {
-          logMessage(`Error al procesar formulario: ${error.message}`, 'error');
         }
-      }, 500); // Esperamos 500ms para que el formulario se envíe primero
-    } catch (e) {
-      logMessage(`Error en el detector de formularios: ${e.message}`, 'error');
-    }
-  });
+      } catch (e) {
+        logMessage(`Error en método submit sobrescrito: ${e.message}`, 'error', DEBUG_MODE);
+      }
+      
+      // Llamar al método original
+      return submitOriginal.apply(this, arguments);
+    };
+    
+    logMessage('Método submit sobrescrito correctamente', 'info', DEBUG_MODE);
+    
+    // ESTRATEGIA 3: Observar keypresses en campos de contraseña
+    logMessage('Configurando detección de keypresses en campos de password (estrategia 3)', 'info', DEBUG_MODE);
+    
+    // Función para capturar eventos de keydown en campos de contraseña
+    const capturarKeypressPassword = (e) => {
+      try {
+        // Solo procesar Enter y Tab
+        if (e.key !== 'Enter' && e.key !== 'Tab') {
+          return;
+        }
+        
+        const target = e.target;
+        
+        // Verificar si es un campo de contraseña
+        if (target.type === 'password') {
+          logMessage(`Tecla ${e.key} presionada en campo de contraseña`, 'info', DEBUG_MODE);
+          
+          // Buscar un formulario padre
+          const formularioPadre = target.closest('form');
+          if (formularioPadre) {
+            logMessage('Campo de contraseña dentro de un formulario', 'info', DEBUG_MODE);
+            
+            // Localizar el campo de usuario
+            const campos = obtenerCamposCredenciales(formularioPadre);
+            
+            if (campos.usuario && campos.password) {
+              const sitio = window.location.href;
+              const usuario = campos.usuario.value.trim();
+              const password = campos.password.value;
+              
+              logMessage(`Credenciales capturadas en keypress: sitio=${sitio}, usuario=${usuario.substring(0, 2)}***`, 'info', DEBUG_MODE);
+              
+              // Validar y procesarlas con retraso si es Enter
+              if (e.key === 'Enter' && validarDatosCredenciales(sitio, usuario, password)) {
+                setTimeout(() => {
+                  logMessage('Mostrando diálogo después de detección de tecla Enter', 'info', DEBUG_MODE);
+                  mostrarDialogoGuardarCredenciales(sitio, usuario, password);
+                }, 2000);
+              }
+              
+              // Guardar en variables de seguimiento
+              credencialesCapturadas = { sitio, usuario, password };
+              datosCompletos = true;
+            }
+          } else {
+            logMessage('Campo de contraseña fuera de un formulario, buscando campo de usuario cercano', 'info', DEBUG_MODE);
+            
+            // Intentar encontrar campo de usuario cercano
+            const camposPassword = document.querySelectorAll('input[type="password"]');
+            const indexActual = Array.from(camposPassword).indexOf(target);
+            
+            if (indexActual !== -1) {
+              // Buscar campos de texto cercanos
+              const camposInput = document.querySelectorAll('input:not([type="password"])');
+              let mejorCampoUsuario = null;
+              let mejorPuntuacion = 0;
+              
+              for (const campo of camposInput) {
+                const puntuacion = calcularPuntuacionCampoUsuario(campo);
+                if (puntuacion > mejorPuntuacion) {
+                  mejorPuntuacion = puntuacion;
+                  mejorCampoUsuario = campo;
+                }
+              }
+              
+              if (mejorCampoUsuario && mejorPuntuacion > 3) {
+                const sitio = window.location.href;
+                const usuario = mejorCampoUsuario.value.trim();
+                const password = target.value;
+                
+                logMessage(`Credenciales sin formulario: sitio=${sitio}, usuario=${usuario.substring(0, 2)}***`, 'info', DEBUG_MODE);
+                
+                // Validar y mostrar si es Enter
+                if (e.key === 'Enter' && validarDatosCredenciales(sitio, usuario, password)) {
+                  setTimeout(() => {
+                    logMessage('Mostrando diálogo después de detección de tecla Enter (sin formulario)', 'info', DEBUG_MODE);
+                    mostrarDialogoGuardarCredenciales(sitio, usuario, password);
+                  }, 2000);
+                }
+                
+                // Guardar en variables de seguimiento
+                credencialesCapturadas = { sitio, usuario, password };
+                datosCompletos = true;
+              }
+            }
+          }
+        }
+      } catch (keyError) {
+        logMessage(`Error en evento keydown: ${keyError.message}`, 'error', DEBUG_MODE);
+      }
+    };
+    
+    // Agregar listener global para keydown
+    document.addEventListener('keydown', capturarKeypressPassword);
+    logMessage('Evento keydown configurado para campos de contraseña', 'info', DEBUG_MODE);
+    
+    // ESTRATEGIA 4: Observar cambios en DOM para detectar login exitoso
+    logMessage('Configurando MutationObserver para detectar cambios post-login (estrategia 4)', 'info', DEBUG_MODE);
+    
+    // Función para verificar si un cambio parece indicar login exitoso
+    const pareceCambioLoginExitoso = (mutaciones) => {
+      // Signos típicos de login exitoso:
+      // 1. Redirect a dashboard
+      // 2. Aparición de elementos de usuario (avatar, nombre)
+      // 3. Desaparición del formulario de login
+      
+      for (const mutacion of mutaciones) {
+        // Verificar nodos añadidos que puedan indicar login exitoso
+        for (const nodo of mutacion.addedNodes) {
+          if (nodo.nodeType === Node.ELEMENT_NODE) {
+            // Buscar elementos que indiquen dashboard o panel de usuario
+            const el = nodo;
+            
+            // Buscar clases o IDs típicos
+            const elementText = el.textContent ? el.textContent.toLowerCase() : '';
+            const clasesBuscadas = ['dashboard', 'account', 'profile', 'user', 'avatar', 'logged', 'welcome'];
+            
+            // Verificar clases
+            if (el.className && typeof el.className === 'string') {
+              for (const clase of clasesBuscadas) {
+                if (el.className.toLowerCase().includes(clase)) {
+                  return true;
+                }
+              }
+            }
+            
+            // Verificar ID
+            if (el.id) {
+              for (const clase of clasesBuscadas) {
+                if (el.id.toLowerCase().includes(clase)) {
+                  return true;
+                }
+              }
+            }
+            
+            // Verificar texto de bienvenida
+            if (elementText.includes('welcome') || 
+                elementText.includes('hello') || 
+                elementText.includes('hi,') ||
+                elementText.includes('bienvenido') || 
+                elementText.includes('hola,')) {
+              return true;
+            }
+          }
+        }
+        
+        // Verificar nodos eliminados (como el formulario de login)
+        for (const nodo of mutacion.removedNodes) {
+          if (nodo.nodeType === Node.ELEMENT_NODE) {
+            const el = nodo;
+            
+            // Si era un formulario que teníamos marcado como login
+            if (el.tagName === 'FORM' && el.dataset && el.dataset.passwdLoginForm === 'true') {
+              return true;
+            }
+          }
+        }
+      }
+      
+      return false;
+    };
+    
+    // Crear un MutationObserver
+    const observador = new MutationObserver((mutaciones) => {
+      try {
+        // Si tenemos credenciales capturadas y hay cambios que indican login exitoso
+        if (credencialesCapturadas && datosCompletos && pareceCambioLoginExitoso(mutaciones)) {
+          logMessage('MutationObserver detectó cambios que indican login exitoso', 'info', DEBUG_MODE);
+          
+          // Mostrar diálogo
+          setTimeout(() => {
+            logMessage('Mostrando diálogo después de detección MutationObserver', 'info', DEBUG_MODE);
+            mostrarDialogoGuardarCredenciales(
+              credencialesCapturadas.sitio,
+              credencialesCapturadas.usuario,
+              credencialesCapturadas.password
+            );
+          }, 1000);
+        }
+      } catch (obsError) {
+        logMessage(`Error en MutationObserver: ${obsError.message}`, 'error', DEBUG_MODE);
+      }
+    });
+    
+    // Iniciar observación
+    observador.observe(document, { childList: true, subtree: true });
+    logMessage('MutationObserver inicializado para detección de cambios post-login', 'info', DEBUG_MODE);
+    
+    // ESTRATEGIA 5: Capturar focus y blur en campos relevantes
+    logMessage('Configurando captura de focus/blur en campos de login (estrategia 5)', 'info', DEBUG_MODE);
+    
+    // Función para capturar focus
+    const capturarFocus = (e) => {
+      try {
+        const target = e.target;
+        
+        // Si es un input
+        if (target.tagName === 'INPUT') {
+          // Determinar tipo de campo
+          if (target.type === 'password') {
+            logMessage('Focus en campo de contraseña', 'info', DEBUG_MODE);
+            campoPasswordActual = target;
+          } else if (esInputUsuario(target)) {
+            logMessage('Focus en campo de usuario', 'info', DEBUG_MODE);
+            campoUsuarioActual = target;
+          }
+        }
+      } catch (focusError) {
+        logMessage(`Error en evento focus: ${focusError.message}`, 'error', DEBUG_MODE);
+      }
+    };
+    
+    // Función para capturar blur
+    const capturarBlur = (e) => {
+      // No hacemos nada, solo mantenemos las referencias
+    };
+    
+    // Agregar listeners globales
+    document.addEventListener('focus', capturarFocus, true);
+    document.addEventListener('blur', capturarBlur, true);
+    logMessage('Eventos focus/blur configurados', 'info', DEBUG_MODE);
+    
+    // ESTRATEGIA 6: Interceptar XMLHttpRequest
+    logMessage('Configurando intercepción de XMLHttpRequest (estrategia 6)', 'info', DEBUG_MODE);
+    
+    // Guardar referencia al constructor original
+    const XHROriginal = window.XMLHttpRequest;
+    
+    // Sobrescribir con versión instrumentada
+    window.XMLHttpRequest = function() {
+      const xhr = new XHROriginal();
+      
+      // Interceptar método open
+      const openOriginal = xhr.open;
+      xhr.open = function() {
+        try {
+          const method = arguments[0];
+          const url = arguments[1];
+          
+          // Registrar petición
+          logMessage(`XHR interceptado: ${method} ${url}`, 'info', DEBUG_MODE);
+          
+          // Guardar URL para uso posterior
+          xhr._passwdUrl = url;
+          xhr._passwdMethod = method;
+        } catch (e) {
+          logMessage(`Error en intercepción XHR.open: ${e.message}`, 'error', DEBUG_MODE);
+        }
+        
+        return openOriginal.apply(xhr, arguments);
+      };
+      
+      // Interceptar onreadystatechange
+      const setOriginal = xhr.setRequestHeader;
+      xhr.setRequestHeader = function() {
+        try {
+          const header = arguments[0];
+          // const value = arguments[1];
+          
+          // Detectar headers de login (Content-Type: application/json)
+          if (header.toLowerCase() === 'content-type') {
+            xhr._passwdContentType = arguments[1];
+          }
+        } catch (e) {
+          logMessage(`Error en intercepción XHR.setRequestHeader: ${e.message}`, 'error', DEBUG_MODE);
+        }
+        
+        return setOriginal.apply(xhr, arguments);
+      };
+      
+      // Sobrescribir onreadystatechange
+      const listenerOriginal = xhr.addEventListener;
+      xhr.addEventListener = function(tipo, listener) {
+        try {
+          if (tipo === 'load' || tipo === 'loadend') {
+            // Interceptar eventos load/loadend
+            const wrapperListener = function(event) {
+              try {
+                // Verificar si es una respuesta exitosa
+                if (xhr.readyState === 4 && xhr.status >= 200 && xhr.status < 300) {
+                  logMessage(`XHR exitoso: ${xhr._passwdMethod} ${xhr._passwdUrl} (${xhr.status})`, 'info', DEBUG_MODE);
+                  
+                  // Si hay credenciales capturadas, mostrar el diálogo
+                  if (credencialesCapturadas && datosCompletos) {
+                    logMessage('Mostrando diálogo post-XHR exitoso', 'info', DEBUG_MODE);
+                    setTimeout(() => {
+                      mostrarDialogoGuardarCredenciales(
+                        credencialesCapturadas.sitio,
+                        credencialesCapturadas.usuario,
+                        credencialesCapturadas.password
+                      );
+                    }, 1000);
+                  } else if (campoUsuarioActual && campoPasswordActual) {
+                    // Intentar capturar de los campos que teníamos en foco
+                    if (campoUsuarioActual.value && campoPasswordActual.value) {
+                      const sitioActual = window.location.href;
+                      const usuarioValor = campoUsuarioActual.value.trim();
+                      const passwordValor = campoPasswordActual.value;
+                      
+                      const datosValidos = validarDatosCredenciales(sitioActual, usuarioValor, passwordValor);
+                      if (datosValidos) {
+                        logMessage('Mostrando diálogo con credenciales capturadas de campos en foco después de XHR', 'info', DEBUG_MODE);
+                        setTimeout(() => {
+                          mostrarDialogoGuardarCredenciales(sitioActual, usuarioValor, passwordValor);
+                        }, 1000);
+                      }
+                    }
+                  }
+                }
+              } catch (e) {
+                logMessage(`Error en wrapper de XHR listener: ${e.message}`, 'error', DEBUG_MODE);
+              }
+              
+              // Llamar listener original
+              return listener.apply(this, arguments);
+            };
+            
+            // Llamar al método original con el wrapper
+            return listenerOriginal.call(xhr, tipo, wrapperListener);
+          }
+        } catch (e) {
+          logMessage(`Error en intercepción XHR.addEventListener: ${e.message}`, 'error', DEBUG_MODE);
+        }
+        
+        // Pasar directamente para otros tipos de eventos
+        return listenerOriginal.apply(xhr, arguments);
+      };
+      
+      return xhr;
+    };
+    
+    logMessage('XMLHttpRequest interceptado correctamente', 'info', DEBUG_MODE);
+    
+    // ESTRATEGIA 7: Interceptar fetch
+    logMessage('Configurando intercepción de fetch (estrategia 7)', 'info', DEBUG_MODE);
+    
+    // Guardar referencia al fetch original
+    const originalFetch = window.fetch;
+    
+    // Sobrescribir con versión instrumentada
+    window.fetch = function() {
+      try {
+        const recurso = arguments[0];
+        const opciones = arguments[1] || {};
+        
+        // Obtener información de la petición
+        let url = '';
+        if (typeof recurso === 'string') {
+          url = recurso;
+        } else if (recurso instanceof Request) {
+          url = recurso.url;
+        }
+        
+        const method = opciones.method || 'GET';
+        
+        logMessage(`Fetch interceptado: ${method} ${url}`, 'info', DEBUG_MODE);
+        
+        // Llamar al fetch original
+        const promesa = originalFetch.apply(this, arguments);
+        
+        // Interceptar respuesta
+        return promesa.then(response => {
+          try {
+            // Verificar si es una respuesta exitosa
+            if (response.ok) {
+              logMessage(`Respuesta exitosa de posible login fetch: ${response.status}`, 'info', DEBUG_MODE);
+              
+              // Similar a la lógica de XHR
+              if (credencialesCapturadas && datosCompletos) {
+                logMessage('Mostrando diálogo post-fetch login exitoso', 'info', DEBUG_MODE);
+                setTimeout(() => {
+                  mostrarDialogoGuardarCredenciales(
+                    credencialesCapturadas.sitio,
+                    credencialesCapturadas.usuario,
+                    credencialesCapturadas.password
+                  );
+                }, 1000);
+              } else if (campoUsuarioActual && campoPasswordActual) {
+                // Intentar capturar de los campos que teníamos en foco
+                if (campoUsuarioActual.value && campoPasswordActual.value) {
+                  const sitioActual = window.location.href;
+                  const usuarioValor = campoUsuarioActual.value.trim();
+                  const passwordValor = campoPasswordActual.value;
+                  
+                  const datosValidos = validarDatosCredenciales(sitioActual, usuarioValor, passwordValor);
+                  if (datosValidos) {
+                    logMessage('Mostrando diálogo con credenciales capturadas de campos en foco después de fetch', 'info', DEBUG_MODE);
+                    setTimeout(() => {
+                      mostrarDialogoGuardarCredenciales(sitioActual, usuarioValor, passwordValor);
+                    }, 1000);
+                  }
+                }
+              }
+            }
+            return response;
+          } catch (e) {
+            logMessage(`Error en intercepción de respuesta fetch: ${e.message}`, 'error', DEBUG_MODE);
+            return response;
+          }
+        });
+      } catch (e) {
+        logMessage(`Error en intercepción fetch: ${e.message}`, 'error', DEBUG_MODE);
+        return originalFetch.apply(this, arguments);
+      }
+    };
+    
+    logMessage('Fetch interceptado correctamente', 'info', DEBUG_MODE);
+    logMessage('🔴 TODAS LAS ESTRATEGIAS DE DETECCIÓN DE FORMULARIOS ACTIVADAS', 'success', true);
+  } catch (e) {
+    logMessage(`Error al inicializar detectores de formularios: ${e.message}`, 'error', true);
+  }
 }
 
 // Función para mostrar el diálogo preguntando si quiere guardar las credenciales
 function mostrarDialogoGuardarCredenciales(sitio, usuario, password) {
-  // Comprobamos si ya existe un diálogo abierto y lo eliminamos
-  const dialogoExistente = document.querySelector('.passwd-guardar-dialogo');
-  if (dialogoExistente) {
-    dialogoExistente.remove();
+  try {
+    logMessage(`!!!FUNCIÓN CRÍTICA!!! Iniciando mostrarDialogoGuardarCredenciales para: ${sitio}, usuario: ${usuario.substring(0, 2)}***`, 'info', true);
+    
+    // Verificar permisos de notificaciones
+    if (chrome.notifications) {
+      logMessage('API chrome.notifications está disponible', 'info', true);
+    } else {
+      logMessage('API chrome.notifications NO está disponible', 'error', true);
+    }
+    
+    // Verificar si runtime está disponible
+    if (chrome.runtime && chrome.runtime.id) {
+      logMessage(`Runtime disponible con ID: ${chrome.runtime.id}`, 'info', true);
+    } else {
+      logMessage('Runtime no disponible o sin ID - podría haber problemas de comunicación', 'error', true);
+    }
+    
+    // Verificar que document.body existe
+    if (!document.body) {
+      logMessage('Error: document.body no está disponible, no se puede mostrar el diálogo', 'error', true);
+      
+      // Programar un reintento
+      setTimeout(() => {
+        logMessage('Reintentando mostrar diálogo después de esperar document.body', 'info', true);
+        if (document.body) {
+          mostrarDialogoGuardarCredenciales(sitio, usuario, password);
+        } else {
+          logMessage('document.body sigue sin estar disponible, usando método alternativo', 'warn', true);
+          // Intentar con notificación del sistema directamente
+          mostrarNotificacionSistema();
+        }
+      }, 1000);
+      return;
+    }
+    
+    // Evitar mostrar múltiples diálogos
+    if (window.passwdDialogShowing) {
+      logMessage('Ya se está mostrando un diálogo de guardar credenciales', 'info', true);
+      return;
+    }
+    
+    // Marcar que estamos mostrando un diálogo
+    window.passwdDialogShowing = true;
+  
+    logMessage(`Mostrando diálogo para guardar credenciales: ${sitio} / ${usuario}`, 'info', true);
+    
+    // Verificar que tenemos todos los datos necesarios
+    if (!sitio || !usuario || !password) {
+      logMessage('Error: Faltan datos para mostrar el diálogo de guardado', 'error', true);
+      console.error('PASSWD: Datos incompletos:', { sitio, usuario: usuario ? 'presente' : 'ausente', password: password ? 'presente' : 'ausente' });
+      window.passwdDialogShowing = false;
+      return;
+    }
+
+    // Variable para rastrear si se mostró algún diálogo
+    let dialogoMostrado = false;
+    
+    // Timer para forzar un método alternativo si nada funciona en 3 segundos
+    const timerSeguridad = setTimeout(() => {
+      if (!dialogoMostrado) {
+        logMessage('TIMER DE SEGURIDAD ACTIVADO: Forzando diálogo tradicional después de 3s sin respuesta', 'error', true);
+        mostrarDialogoTradicional();
+      }
+    }, 3000);
+    
+    // Función para mostrar notificación del sistema
+    function mostrarNotificacionSistema(intentos = 0) {
+      try {
+        logMessage(`Intentando mostrar notificación del sistema (intento ${intentos + 1})`, 'info', true);
+        
+        // Agregar diagnóstico de runtime
+        if (!chrome.runtime) {
+          logMessage('Error crítico: chrome.runtime no está disponible', 'error', true);
+          if (intentos < 2) {
+            logMessage(`Reintentando en 1s (intento ${intentos + 1})`, 'warn', true);
+            setTimeout(() => mostrarNotificacionSistema(intentos + 1), 1000);
+          } else {
+            logMessage('Agotados intentos de notificación, usando método tradicional', 'error', true);
+            mostrarDialogoTradicional();
+          }
+          return;
+        }
+        
+        if (!chrome.runtime.id) {
+          logMessage('Error: chrome.runtime.id no disponible (contexto inválido)', 'error', true);
+          if (intentos < 2) {
+            setTimeout(() => {
+              checkExtensionConnection();
+              mostrarNotificacionSistema(intentos + 1);
+            }, 1000);
+          } else {
+            logMessage('Agotados intentos de reconexión, usando método tradicional', 'error', true);
+            mostrarDialogoTradicional();
+          }
+          return;
+        }
+        
+        // Preparar mensaje con datos más claros
+        const mensajeCredenciales = {
+          action: 'show_save_notification',
+          data: {
+            sitio: sitio,
+            usuario: usuario
+          },
+          source: 'content_script',
+          timestamp: Date.now(),
+          tabUrl: window.location.href
+        };
+        
+        logMessage(`Enviando mensaje a background: ${JSON.stringify(mensajeCredenciales)}`, 'info', true);
+        
+        chrome.runtime.sendMessage(mensajeCredenciales, function(response) {
+          if (chrome.runtime.lastError) {
+            const errorMsg = chrome.runtime.lastError.message;
+            logMessage(`Error al mostrar notificación del sistema: ${errorMsg}`, 'error', true);
+            
+            // Verificar si es un error de conexión
+            if (errorMsg.includes('Extension context invalidated') || 
+                errorMsg.includes('disconnected port')) {
+              logMessage('Error de contexto de extensión, intentando reconectar...', 'warn', true);
+              setTimeout(() => {
+                checkExtensionConnection();
+                // Si la reconexión fue exitosa, reintentar
+                if (extensionContextValid) {
+                  setTimeout(() => mostrarNotificacionSistema(intentos + 1), 500);
+                } else {
+                  mostrarDialogoTradicional();
+                }
+              }, 500);
+              return;
+            }
+            
+            // Llegados a este punto, hacemos doble intento
+            if (intentos < 2) {
+              logMessage(`Reintentando mostrar notificación (intento ${intentos + 2})`, 'warn', true);
+              setTimeout(() => mostrarNotificacionSistema(intentos + 1), 1000);
+              return;
+            }
+            
+            // Si seguimos fallando, método tradicional
+            logMessage('No se pudo mostrar notificación después de varios intentos, usando método tradicional', 'error', true);
+            mostrarDialogoTradicional();
+            return;
+          }
+          
+          logMessage(`Respuesta de show_save_notification: ${JSON.stringify(response)}`, 'info', true);
+          
+          if (response && response.success) {
+            logMessage('Notificación del sistema mostrada correctamente', 'success', true);
+            // Marcar que se mostró un diálogo
+            dialogoMostrado = true;
+            clearTimeout(timerSeguridad);
+            
+            // También preparar las credenciales para cuando el usuario interactúe con la notificación
+            const prepareData = {
+              action: 'prepare_credentials',
+              credencial: {
+                sitio: sitio,
+                usuario: usuario,
+                contraseña: password
+              },
+              source: 'content_script',
+              timestamp: Date.now(),
+              notificationId: response.notificationId
+            };
+            
+            logMessage(`Preparando credenciales para guardar: ${JSON.stringify(prepareData)}`, 'info', true);
+            
+            chrome.runtime.sendMessage(prepareData, function(prepareResponse) {
+              logMessage(`Respuesta de prepare_credentials: ${JSON.stringify(prepareResponse)}`, 'info', true);
+              
+              if (chrome.runtime.lastError) {
+                logMessage(`Error al preparar credenciales: ${chrome.runtime.lastError.message}`, 'error', true);
+              } else if (prepareResponse && prepareResponse.success) {
+                logMessage('Credenciales preparadas correctamente con ID: ' + prepareResponse.id, 'success', true);
+              }
+            });
+            window.passwdDialogShowing = false;
+          } else {
+            if (intentos < 2) {
+              logMessage(`Notificación falló, reintentando (intento ${intentos + 2})`, 'warn', true);
+              setTimeout(() => mostrarNotificacionSistema(intentos + 1), 1000);
+            } else {
+              logMessage('No se pudo mostrar notificación después de varios intentos, usando método tradicional', 'error', true);
+              mostrarDialogoTradicional();
+            }
+          }
+        });
+      } catch (notifError) {
+        logMessage(`Error al intentar mostrar notificación del sistema: ${notifError.message}`, 'error', true);
+        console.error('PASSWD: Detalles de error en notificación:', notifError);
+        
+        // Reintento limitado para errores críticos
+        if (intentos < 2) {
+          setTimeout(() => mostrarNotificacionSistema(intentos + 1), 1000);
+        } else {
+          // Continue con el método tradicional después de agotar intentos
+          mostrarDialogoTradicional();
+        }
+      }
+    }
+    
+    // Función para mostrar el diálogo tradicional en DOM
+    function mostrarDialogoTradicional() {
+      try {
+        // Si ya se mostró un diálogo, no mostrar otro
+        if (dialogoMostrado) {
+          logMessage('Ya se mostró un diálogo, no mostrando el tradicional', 'info', true);
+          return;
+        }
+        
+        // Marcar que se mostró un diálogo
+        dialogoMostrado = true;
+        clearTimeout(timerSeguridad);
+        
+        logMessage('CREANDO DIÁLOGO TRADICIONAL URGENTE EN DOM', 'info', true);
+        
+        // Crear contenedor principal
+        const dialogContainer = document.createElement('div');
+        dialogContainer.id = 'passwd-save-dialog';
+        
+        // Estilo base del diálogo para asegurar que sea visible
+        Object.assign(dialogContainer.style, {
+          position: 'fixed',
+          top: '20px',
+          right: '20px',
+          width: '320px',
+          maxWidth: '90%',
+          backgroundColor: '#fff',
+          border: '1px solid #ccc',
+          borderRadius: '8px',
+          boxShadow: '0 2px 10px rgba(0,0,0,0.2)',
+          zIndex: '2147483647',
+          padding: '15px',
+          fontFamily: 'Arial, sans-serif',
+          fontSize: '14px',
+          color: '#333',
+          display: 'flex',
+          flexDirection: 'column',
+          animation: 'passwd-fade-in 0.3s'
+        });
+        
+        // Estilo de animación
+        const styleElement = document.createElement('style');
+        styleElement.textContent = `
+          @keyframes passwd-fade-in {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+          }
+        `;
+        document.head.appendChild(styleElement);
+        
+        // Crear el contenido del diálogo
+        const header = document.createElement('div');
+        header.style.display = 'flex';
+        header.style.justifyContent = 'space-between';
+        header.style.alignItems = 'center';
+        header.style.marginBottom = '10px';
+        
+        const title = document.createElement('h3');
+        title.textContent = 'PASSWD - Guardar Credenciales';
+        title.style.margin = '0';
+        title.style.fontSize = '16px';
+        title.style.fontWeight = 'bold';
+        
+        const closeButton = document.createElement('button');
+        closeButton.textContent = '×';
+        closeButton.style.background = 'none';
+        closeButton.style.border = 'none';
+        closeButton.style.fontSize = '20px';
+        closeButton.style.cursor = 'pointer';
+        closeButton.style.padding = '0 5px';
+        closeButton.style.marginLeft = '10px';
+        
+        header.appendChild(title);
+        header.appendChild(closeButton);
+        
+        const content = document.createElement('div');
+        content.style.marginBottom = '15px';
+        
+        // Simplificar la URL para mostrar
+        let displayUrl = sitio;
+        try {
+          const urlObj = new URL(sitio);
+          displayUrl = urlObj.hostname;
+        } catch (e) {
+          // Mantener la URL original si hay error
+          console.log('Error al procesar URL:', e);
+        }
+        
+        // Truncar URL si es muy larga
+        if (displayUrl.length > 30) {
+          displayUrl = displayUrl.substring(0, 27) + '...';
+        }
+        
+        // Aplicar estilo de texto usuario
+        let displayUser = usuario;
+        if (displayUser.length > 25) {
+          displayUser = displayUser.substring(0, 22) + '...';
+        }
+        
+        const message = document.createElement('p');
+        message.innerHTML = `¿Deseas guardar la contraseña para <strong>${displayUser}</strong> en <strong>${displayUrl}</strong>?`;
+        message.style.margin = '0 0 10px 0';
+        
+        content.appendChild(message);
+        
+        const buttons = document.createElement('div');
+        buttons.style.display = 'flex';
+        buttons.style.justifyContent = 'flex-end';
+        
+        const cancelButton = document.createElement('button');
+        cancelButton.textContent = 'Cancelar';
+        cancelButton.style.marginRight = '10px';
+        cancelButton.style.padding = '8px 12px';
+        cancelButton.style.border = '1px solid #ccc';
+        cancelButton.style.borderRadius = '4px';
+        cancelButton.style.background = '#f5f5f5';
+        cancelButton.style.cursor = 'pointer';
+        
+        const saveButton = document.createElement('button');
+        saveButton.textContent = 'Guardar';
+        saveButton.style.padding = '8px 12px';
+        saveButton.style.border = '1px solid #4285f4';
+        saveButton.style.borderRadius = '4px';
+        saveButton.style.background = '#4285f4';
+        saveButton.style.color = '#fff';
+        saveButton.style.cursor = 'pointer';
+        
+        buttons.appendChild(cancelButton);
+        buttons.appendChild(saveButton);
+        
+        // Construir el diálogo
+        dialogContainer.appendChild(header);
+        dialogContainer.appendChild(content);
+        dialogContainer.appendChild(buttons);
+        
+        // Función para cerrar el diálogo
+        function cerrarDialogo() {
+          try {
+            // Si el diálogo ya se cerró o no existe, no hacer nada
+            if (!dialogContainer || !dialogContainer.parentNode) {
+              return;
+            }
+            
+            // Animación de cierre
+            dialogContainer.style.animation = 'passwd-fade-out 0.2s';
+            
+            setTimeout(() => {
+              try {
+                if (dialogContainer.parentNode) {
+                  dialogContainer.parentNode.removeChild(dialogContainer);
+                }
+                window.passwdDialogShowing = false;
+              } catch (e) {
+                console.error('Error al remover diálogo:', e);
+              }
+            }, 200);
+          } catch (e) {
+            logMessage(`Error al cerrar diálogo: ${e.message}`, 'error', true);
+            // Eliminar el diálogo directamente en caso de error
+            try {
+              if (dialogContainer.parentNode) {
+                dialogContainer.parentNode.removeChild(dialogContainer);
+              }
+            } catch (e2) {}
+            window.passwdDialogShowing = false;
+          }
+        }
+        
+        // Función para guardar credenciales
+        function guardarCredencialesClick() {
+          logMessage('Usuario hizo clic en guardar credenciales', 'info', true);
+          cerrarDialogo();
+          guardarCredenciales(sitio, usuario, password);
+        }
+        
+        // Agregar listeners a los botones
+        saveButton.addEventListener('click', guardarCredencialesClick);
+        cancelButton.addEventListener('click', cerrarDialogo);
+        closeButton.addEventListener('click', cerrarDialogo);
+        
+        // Estilo de animación para cerrar (añadir a la hoja de estilos)
+        styleElement.textContent += `
+          @keyframes passwd-fade-out {
+            from { opacity: 1; transform: translateY(0); }
+            to { opacity: 0; transform: translateY(-20px); }
+          }
+        `;
+        
+        // Agregar el diálogo al DOM
+        document.body.appendChild(dialogContainer);
+        
+        logMessage('Diálogo tradicional mostrado correctamente', 'success', true);
+      } catch (dialogError) {
+        logMessage(`Error crítico al mostrar diálogo tradicional: ${dialogError.message}`, 'error', true);
+        console.error('PASSWD: Error al crear diálogo DOM:', dialogError);
+        
+        // Intento final: mostrar un diálogo de alerta nativo
+        try {
+          if (confirm(`PASSWD: ¿Deseas guardar tus credenciales para ${usuario}?`)) {
+            guardarCredenciales(sitio, usuario, password);
+          }
+        } catch (alertError) {
+          logMessage(`Error final al mostrar alerta: ${alertError.message}`, 'error', true);
+          console.error('PASSWD: No se pudo mostrar ningún tipo de diálogo');
+        }
+        
+        window.passwdDialogShowing = false;
+      }
+    }
+    
+    // Intentar mostrar la notificación del sistema primero
+    logMessage('Llamando a mostrarNotificacionSistema como primera opción', 'info', true);
+    mostrarNotificacionSistema();
+    
+    // Si llegamos aquí, estamos esperando respuesta de la notificación
+    logMessage('Esperando respuesta de la notificación del sistema o timeout de seguridad (3s)', 'info', true);
+  } catch (e) {
+    logMessage(`Error general en mostrarDialogoGuardarCredenciales: ${e.message}`, 'error', true);
+    console.error('PASSWD: Error general al mostrar diálogo:', e);
+    window.passwdDialogShowing = false;
   }
-  
-  // Creamos el diálogo
-  const dialogo = document.createElement('div');
-  dialogo.className = 'passwd-guardar-dialogo';
-  
-  // Estilo del diálogo con animación de entrada
-  dialogo.style.cssText = `
-    position: fixed;
-    top: 20px;
-    right: 20px;
-    width: 320px;
-    background-color: #212121;
-    color: #fff;
-    border: 1px solid #444;
-    border-radius: 8px;
-    padding: 16px;
-    box-shadow: 0 8px 25px rgba(0,0,0,0.6);
-    z-index: 2147483647;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-    animation: passwd-dialog-fade-in 0.3s ease-out;
-  `;
-  
-  // Contenido del diálogo
-  dialogo.innerHTML = `
-    <style>
-      @keyframes passwd-dialog-fade-in {
-        from { opacity: 0; transform: translateY(-20px); }
-        to { opacity: 1; transform: translateY(0); }
-      }
-      .passwd-guardar-titulo {
-        font-size: 16px;
-        font-weight: 600;
-        margin-bottom: 10px;
-        display: flex;
-        align-items: center;
-      }
-      .passwd-guardar-icono {
-        width: 20px;
-        height: 20px;
-        margin-right: 8px;
-        background-color: #4285F4;
-        border-radius: 4px;
-        padding: 2px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
-      .passwd-guardar-info {
-        margin-bottom: 12px;
-        font-size: 14px;
-        color: #aaa;
-      }
-      .passwd-guardar-datos {
-        background-color: #333;
-        border-radius: 6px;
-        padding: 10px;
-        margin-bottom: 16px;
-        font-size: 13px;
-      }
-      .passwd-guardar-dato {
-        display: flex;
-        justify-content: space-between;
-        margin-bottom: 6px;
-      }
-      .passwd-guardar-dato:last-child {
-        margin-bottom: 0;
-      }
-      .passwd-guardar-etiqueta {
-        color: #aaa;
-      }
-      .passwd-guardar-valor {
-        color: #fff;
-        font-weight: 500;
-        max-width: 180px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      .passwd-guardar-botones {
-        display: flex;
-        justify-content: flex-end;
-        gap: 10px;
-      }
-      .passwd-guardar-boton {
-        padding: 8px 16px;
-        border-radius: 4px;
-        border: none;
-        font-weight: 600;
-        cursor: pointer;
-        font-size: 13px;
-        transition: all 0.2s ease;
-      }
-      .passwd-guardar-boton-cancelar {
-        background-color: #333;
-        color: #aaa;
-      }
-      .passwd-guardar-boton-cancelar:hover {
-        background-color: #444;
-        color: #fff;
-      }
-      .passwd-guardar-boton-guardar {
-        background-color: #4285F4;
-        color: white;
-      }
-      .passwd-guardar-boton-guardar:hover {
-        background-color: #5294FF;
-      }
-    </style>
-    <div class="passwd-guardar-titulo">
-      <div class="passwd-guardar-icono">P</div>
-      Guardar en PASSWD
-    </div>
-    <div class="passwd-guardar-info">
-      ¿Quieres guardar estas credenciales en tu gestor PASSWD?
-    </div>
-    <div class="passwd-guardar-datos">
-      <div class="passwd-guardar-dato">
-        <span class="passwd-guardar-etiqueta">Sitio:</span>
-        <span class="passwd-guardar-valor">${sitio}</span>
-      </div>
-      <div class="passwd-guardar-dato">
-        <span class="passwd-guardar-etiqueta">Usuario:</span>
-        <span class="passwd-guardar-valor">${usuario}</span>
-      </div>
-      <div class="passwd-guardar-dato">
-        <span class="passwd-guardar-etiqueta">Contraseña:</span>
-        <span class="passwd-guardar-valor">••••••••</span>
-      </div>
-    </div>
-    <div class="passwd-guardar-botones">
-      <button class="passwd-guardar-boton passwd-guardar-boton-cancelar">Cancelar</button>
-      <button class="passwd-guardar-boton passwd-guardar-boton-guardar">Guardar</button>
-    </div>
-  `;
-  
-  // Añadimos el diálogo al DOM
-  document.body.appendChild(dialogo);
-  
-  // Configuramos los eventos de los botones
-  const botonCancelar = dialogo.querySelector('.passwd-guardar-boton-cancelar');
-  const botonGuardar = dialogo.querySelector('.passwd-guardar-boton-guardar');
-  
-  // Auto-cerrar después de 30 segundos
-  const timeoutId = setTimeout(() => {
-    if (document.body.contains(dialogo)) {
-      dialogo.remove();
-    }
-  }, 30000);
-  
-  // Evento para cancelar
-  botonCancelar.addEventListener('click', () => {
-    clearTimeout(timeoutId);
-    dialogo.remove();
-  });
-  
-  // Evento para guardar
-  botonGuardar.addEventListener('click', () => {
-    clearTimeout(timeoutId);
-    
-    // Animación de salida antes de eliminar
-    dialogo.style.animation = 'passwd-dialog-fade-out 0.3s ease-out forwards';
-    dialogo.addEventListener('animationend', () => {
-      dialogo.remove();
-    });
-    
-    // Enviamos las credenciales al background script
-    guardarCredenciales(sitio, usuario, password);
-  });
-  
-  // Añadimos animación de salida al CSS
-  const style = document.createElement('style');
-  style.textContent = `
-    @keyframes passwd-dialog-fade-out {
-      from { opacity: 1; transform: translateY(0); }
-      to { opacity: 0; transform: translateY(-20px); }
-    }
-  `;
-  document.head.appendChild(style);
 }
 
 // Función para enviar las credenciales al background script
 function guardarCredenciales(sitio, usuario, password) {
-  chrome.runtime.sendMessage({
-    accion: 'guardar_credenciales',
-    credencial: {
+  try {
+    logMessage(`Iniciando guardado de credenciales para: ${sitio}`, 'info', true);
+    
+    // Verificar datos obligatorios
+    if (!sitio || !usuario || !password) {
+      logMessage('Error: Faltan datos obligatorios para guardar credenciales', 'error', true);
+      mostrarNotificacion(false, 'Faltan datos obligatorios');
+      return;
+    }
+    
+    // Crear objeto con los datos en el formato correcto para Firebase
+    const credencial = {
       sitio: sitio,
       usuario: usuario,
-      password: password
-    }
-  })
-  .then(response => {
-    logMessage(`Respuesta al guardar credenciales: ${JSON.stringify(response)}`, 'info');
-    if (response && response.success) {
-      mostrarNotificacionGuardado(true);
-    } else {
-      mostrarNotificacionGuardado(false, response?.error || 'Error desconocido');
-    }
-  })
-  .catch(error => {
-    logMessage(`Error al guardar credenciales: ${error.message}`, 'error');
-    mostrarNotificacionGuardado(false, 'Error de comunicación con la extensión');
-  });
+      contraseña: password // Asegurar que la clave es "contraseña" con tilde
+    };
+    
+    logMessage(`Enviando credenciales directamente al background: ${usuario} @ ${sitio}`, 'info', true);
+    
+    // Enviar mensaje al background para guardar las credenciales
+    chrome.runtime.sendMessage({
+      accion: 'guardar_credenciales', // Usar "accion" en lugar de "action" para mantener coherencia
+      credencial: credencial
+    }, function(response) {
+      try {
+        if (chrome.runtime.lastError) {
+          logMessage(`Error de comunicación: ${chrome.runtime.lastError.message}`, 'error', true);
+          mostrarNotificacion(false, 'Error de comunicación con la extensión');
+          return;
+        }
+        
+        logMessage(`Respuesta recibida: ${JSON.stringify(response)}`, 'info', true);
+        
+        if (response && response.success) {
+          logMessage('Credenciales guardadas correctamente en Firebase', 'success', true);
+          mostrarNotificacion(true, 'Contraseña guardada correctamente');
+        } else {
+          const errorMsg = response && response.error ? response.error : 'Error desconocido';
+          
+          // Formateo de mensajes de error para mejor comprensión del usuario
+          let mensajeUsuario = errorMsg;
+          
+          if (errorMsg.includes('no autenticado') || errorMsg.includes('Usuario no autenticado')) {
+            mensajeUsuario = 'Debes iniciar sesión para guardar contraseñas';
+            
+            // Intentar mostrar el popup de login
+            setTimeout(() => {
+              chrome.runtime.sendMessage({ action: 'show_login_popup' });
+            }, 1000);
+          } else if (errorMsg.includes('Firebase no disponible')) {
+            mensajeUsuario = 'No se pudo conectar con el servidor. Verifica tu conexión a internet.';
+          } else if (errorMsg.includes('permisos')) {
+            mensajeUsuario = 'No tienes permisos para guardar contraseñas. Contacta al administrador.';
+          }
+          
+          logMessage(`Error al guardar credenciales: ${errorMsg}`, 'error', true);
+          mostrarNotificacion(false, mensajeUsuario);
+        }
+      } catch (e) {
+        logMessage(`Error al procesar respuesta: ${e.message}`, 'error', true);
+        mostrarNotificacion(false, 'Error al procesar la respuesta');
+      }
+    });
+  } catch (e) {
+    logMessage(`Error general al guardar credenciales: ${e.message}`, 'error', true);
+    mostrarNotificacion(false, 'Error inesperado al guardar credenciales');
+  }
 }
 
-// Función para mostrar notificación de resultado
-function mostrarNotificacionGuardado(exito, mensaje = '') {
-  const notificacion = document.createElement('div');
-  notificacion.className = 'passwd-notificacion';
-  
-  notificacion.style.cssText = `
-    position: fixed;
-    bottom: 20px;
-    right: 20px;
-    padding: 12px 16px;
-    border-radius: 8px;
-    color: white;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-    font-size: 14px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-    z-index: 2147483647;
-    animation: passwd-notif-fade-in 0.3s ease-out;
-  `;
-  
-  if (exito) {
-    notificacion.style.backgroundColor = '#0d3e1a';
-    notificacion.style.border = '1px solid #106b2c';
-    notificacion.innerText = '✓ Credenciales guardadas correctamente';
-  } else {
-    notificacion.style.backgroundColor = '#3e0d0d';
-    notificacion.style.border = '1px solid #6b1010';
-    notificacion.innerText = `✗ Error al guardar: ${mensaje}`;
-  }
-  
-  // Añadimos la notificación al DOM
-  document.body.appendChild(notificacion);
-  
-  // Añadimos animación de entrada y salida
-  const style = document.createElement('style');
-  style.textContent = `
-    @keyframes passwd-notif-fade-in {
-      from { opacity: 0; transform: translateY(20px); }
-      to { opacity: 1; transform: translateY(0); }
+// Función para mostrar una notificación de resultado
+function mostrarNotificacion(exito, mensaje = '') {
+  try {
+    // Eliminar notificación existente si la hay
+    const notificacionExistente = document.getElementById('passwd-notificacion');
+    if (notificacionExistente) {
+      notificacionExistente.remove();
     }
-    @keyframes passwd-notif-fade-out {
-      from { opacity: 1; transform: translateY(0); }
-      to { opacity: 0; transform: translateY(20px); }
-    }
-  `;
-  document.head.appendChild(style);
-  
-  // Auto-eliminar después de 4 segundos
-  setTimeout(() => {
-    notificacion.style.animation = 'passwd-notif-fade-out 0.3s ease-out forwards';
-    notificacion.addEventListener('animationend', () => {
-      notificacion.remove();
+    
+    // Crear nueva notificación
+    const notificacion = document.createElement('div');
+    notificacion.id = 'passwd-notificacion';
+    
+    // Estilo base
+    Object.assign(notificacion.style, {
+      position: 'fixed',
+      top: '20px',
+      right: '20px',
+      zIndex: '2147483647',
+      padding: '12px 20px',
+      borderRadius: '6px',
+      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+      fontSize: '14px',
+      fontFamily: 'Arial, sans-serif',
+      color: 'white',
+      maxWidth: '320px',
+      minWidth: '200px',
+      opacity: '0',
+      transform: 'translateY(-20px)',
+      transition: 'opacity 0.3s, transform 0.3s',
+      textAlign: 'left',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between'
     });
-  }, 4000);
+    
+    // Estilo condicional según resultado
+    notificacion.style.backgroundColor = exito ? '#28a745' : '#dc3545';
+    
+    // Icono de estado
+    const icono = document.createElement('span');
+    icono.innerHTML = exito ? '✓' : '✕';
+    icono.style.marginRight = '10px';
+    icono.style.fontSize = '16px';
+    
+    // Contenido del mensaje
+    const contenido = document.createElement('span');
+    contenido.style.flex = '1';
+    
+    // Mensaje personalizado o mensaje por defecto
+    const mensajeTexto = mensaje || (exito ? 'Contraseña guardada correctamente' : 'Error al guardar la contraseña');
+    contenido.textContent = mensajeTexto;
+    
+    // Botón de cerrar
+    const cerrar = document.createElement('span');
+    cerrar.innerHTML = '×';
+    cerrar.style.marginLeft = '10px';
+    cerrar.style.fontSize = '20px';
+    cerrar.style.cursor = 'pointer';
+    cerrar.style.opacity = '0.8';
+    cerrar.style.fontWeight = 'bold';
+    cerrar.addEventListener('click', () => {
+      notificacion.style.opacity = '0';
+      notificacion.style.transform = 'translateY(-20px)';
+      setTimeout(() => notificacion.remove(), 300);
+    });
+    
+    // Construcción de la notificación
+    notificacion.appendChild(icono);
+    notificacion.appendChild(contenido);
+    notificacion.appendChild(cerrar);
+    
+    // Añadir al DOM
+    document.body.appendChild(notificacion);
+    
+    // Mostrar con animación
+    setTimeout(() => {
+      notificacion.style.opacity = '1';
+      notificacion.style.transform = 'translateY(0)';
+    }, 10);
+    
+    // Auto-desaparecer después de 5 segundos
+    setTimeout(() => {
+      if (document.body.contains(notificacion)) {
+        notificacion.style.opacity = '0';
+        notificacion.style.transform = 'translateY(-20px)';
+        setTimeout(() => {
+          if (document.body.contains(notificacion)) {
+            notificacion.remove();
+          }
+        }, 300);
+      }
+    }, 5000);
+    
+    // Guardar registro del resultado
+    logMessage(`Notificación mostrada: ${mensajeTexto}`, exito ? 'success' : 'error');
+    
+  } catch (error) {
+    // Fallback en caso de error
+    console.error('Error al mostrar notificación:', error);
+    alert(exito ? 'Contraseña guardada correctamente' : `Error: ${mensaje || 'No se pudo guardar la contraseña'}`);
+  }
+}
+
+// Función para configurar la detección de campos de login
+function setupLoginFieldsDetection() {
+  try {
+    logMessage('Configurando detección de campos de login...', 'info');
+    
+    // Iniciar la primera detección de campos
+    añadirIconosACamposLogin();
+    
+    // Configurar el intervalo de actualización
+    if (typeof iconUpdateInterval === 'undefined') {
+      // Ya se configuró en otra parte del código, no es necesario hacerlo de nuevo
+      logMessage('El intervalo de actualización ya está configurado', 'info');
+    }
+    
+    // Configurar observer para detectar cambios en el DOM si aún no está configurado
+    if (typeof observer === 'undefined' || !observer) {
+      logMessage('Configurando nuevo observer para cambios en el DOM', 'info');
+      
+      const newObserver = new MutationObserver((mutations) => {
+        let needsUpdate = false;
+        
+        mutations.forEach(mutation => {
+          if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+            for (let node of mutation.addedNodes) {
+              if (node.nodeType === Node.ELEMENT_NODE) {
+                if (node.tagName === 'INPUT' || node.querySelector('input')) {
+                  needsUpdate = true;
+                  break;
+                }
+              }
+            }
+          }
+        });
+        
+        if (needsUpdate) {
+          añadirIconosACamposLogin();
+        }
+      });
+      
+      if (document.body) {
+        newObserver.observe(document.body, { childList: true, subtree: true });
+        logMessage('Observer configurado correctamente', 'info');
+      } else {
+        document.addEventListener('DOMContentLoaded', () => {
+          if (document.body) {
+            newObserver.observe(document.body, { childList: true, subtree: true });
+            logMessage('Observer configurado después de DOMContentLoaded', 'info');
+          }
+        });
+      }
+    }
+    
+    logMessage('Detección de campos de login configurada correctamente', 'info');
+    return true;
+  } catch (e) {
+    logMessage(`Error al configurar detección de campos de login: ${e}`, 'error');
+    return false;
+  }
 }
 
 // Función para inicializar los componentes
 function initialize() {
-  // Registrar el script está cargado
-  console.log('PASSWD Content Script inicializado en:', window.location.href);
+  logMessage('Inicializando content script PASSWD...', 'info');
   
-  try {
-    // Notificar que está listo lo antes posible
-    notifyReady();
-    
-    // Solicitar credenciales inmediatamente al iniciar
-    setTimeout(() => {
-      if (!credencialesDisponibles || credencialesDisponibles.length === 0) {
-        console.log('Solicitando credenciales al inicializar...');
-        requestCredentials();
-      }
-    }, 1000);
-    
-    // Configurar detección de campos de login lo antes posible
-    añadirIconosACamposLogin();
-    
-    // Configurar un intervalo para verificar nuevos campos que pueden aparecer dinámicamente
-    setInterval(() => {
-      if (extensionContextValid) {
-        añadirIconosACamposLogin();
-      }
-    }, 3000);
-    
-    // Reiniciar la extensión si se detecta un cambio de contexto o error
-    setupContextCheckInterval();
-    
-    // Configurar detector de envío de formularios
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', detectarEnvioFormularios);
-    } else {
-      detectarEnvioFormularios();
-    }
-  } catch (e) {
-    console.error('Error durante la inicialización del content script:', e);
-    // En caso de error durante la inicialización, programar un reinicio
-    setTimeout(reinitializeExtension, 2000);
-  }
+  // Notificar al background que el content script está listo
+  notifyReady();
+  
+  // Configurar detección de formularios
+  detectarEnvioFormularios();
+  
+  // Añadir estilos necesarios
+  addStyleSafely();
+  
+  // Configurar detección de campos de login
+  setupLoginFieldsDetection();
+  
+  // Otros aspectos de inicialización...
 }
 
 // Llamar a la inicialización
 initialize();
+
+// Función auxiliar para obtener campos de usuario y contraseña de un formulario
+function obtenerCamposCredenciales(formulario) {
+  try {
+    if (!formulario) return { usuario: null, password: null };
+
+    // Buscar campo de contraseña (suele ser más específico)
+    const camposPassword = Array.from(formulario.querySelectorAll('input[type="password"]'));
+    if (camposPassword.length === 0) return { usuario: null, password: null };
+
+    // Buscar campo de usuario
+    let camposUsuarioPosibles = Array.from(formulario.querySelectorAll(
+      'input[type="text"], input[type="email"], input:not([type]), input[name*="user"], input[name*="email"], input[id*="user"], input[id*="email"], input[name*="login"], input[id*="login"]'
+    ));
+
+    // Si no hay campos que coincidan con los selectores, buscar todos los inputs de texto
+    if (camposUsuarioPosibles.length === 0) {
+      camposUsuarioPosibles = Array.from(formulario.querySelectorAll('input')).filter(
+        input => input.type !== 'password' && input.type !== 'submit' && input.type !== 'button' && input.type !== 'checkbox'
+      );
+    }
+
+    // Ordenar campos por probabilidad de ser un campo de usuario
+    camposUsuarioPosibles.sort((a, b) => {
+      const aScore = calcularPuntuacionCampoUsuario(a);
+      const bScore = calcularPuntuacionCampoUsuario(b);
+      return bScore - aScore; // Mayor puntuación primero
+    });
+
+    // Tomar el campo con mayor puntuación o el primero si hay empate
+    const campoUsuario = camposUsuarioPosibles.length > 0 ? camposUsuarioPosibles[0] : null;
+    const campoPassword = camposPassword[0];
+
+    return { usuario: campoUsuario, password: campoPassword };
+  } catch (e) {
+    logMessage(`Error al obtener campos de credenciales: ${e.message}`, 'error', true);
+    return { usuario: null, password: null };
+  }
+}
+
+// Función auxiliar para calcular la puntuación de un campo como probable campo de usuario
+function calcularPuntuacionCampoUsuario(input) {
+  let score = 0;
+  
+  // Verificar tipo
+  if (input.type === 'email') score += 10;
+  if (input.type === 'text') score += 5;
+  
+  // Verificar atributos
+  const id = (input.id || '').toLowerCase();
+  const name = (input.name || '').toLowerCase();
+  const placeholder = (input.placeholder || '').toLowerCase();
+  const classNames = (input.className || '').toLowerCase();
+  
+  // Patrones comunes para campos de usuario
+  const patronesAltaPrioridad = ['username', 'userid', 'email', 'correo'];
+  const patronesMediaPrioridad = ['user', 'login', 'account', 'mail'];
+  const patronesBajaPrioridad = ['name', 'nombre', 'identifier'];
+  
+  // Verificar patrones de alta prioridad
+  for (const patron of patronesAltaPrioridad) {
+    if (id === patron || name === patron) score += 15;
+    if (id.includes(patron) || name.includes(patron)) score += 10;
+    if (placeholder.includes(patron)) score += 8;
+    if (classNames.includes(patron)) score += 5;
+  }
+  
+  // Verificar patrones de media prioridad
+  for (const patron of patronesMediaPrioridad) {
+    if (id === patron || name === patron) score += 10;
+    if (id.includes(patron) || name.includes(patron)) score += 8;
+    if (placeholder.includes(patron)) score += 6;
+    if (classNames.includes(patron)) score += 4;
+  }
+  
+  // Verificar patrones de baja prioridad
+  for (const patron of patronesBajaPrioridad) {
+    if (id === patron || name === patron) score += 5;
+    if (id.includes(patron) || name.includes(patron)) score += 3;
+    if (placeholder.includes(patron)) score += 2;
+    if (classNames.includes(patron)) score += 1;
+  }
+  
+  // Bonus para el primer input en el formulario
+  if (input.form) {
+    const inputs = Array.from(input.form.querySelectorAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"])'));
+    if (inputs.indexOf(input) === 0) score += 3;
+  }
+  
+  return score;
+}
+
+// Al inicio del script (justo después de las variables globales)
+// Activar el modo debug para ver todos los mensajes
+window.passwdDebugMode = true;
+
+// Modificar la función initContent para forzar la comprobación de si estamos en Gmail
+function initContent() {
+  try {
+    logMessage('Inicializando content script de PASSWD...', 'info', true);
+    
+    // Verificar si estamos en un dominio de Google
+    const esGoogle = window.location.hostname.includes('google.com') || 
+                     window.location.hostname.includes('gmail.com');
+    
+    if (esGoogle) {
+      logMessage('Sitio de Google detectado, activando modo específico para Google', 'info', true);
+    }
+
+    // Añadir estilos CSS para nuestros componentes
+    addStyleSafely();
+    
+    // Configurar observer para detectar cambios en el DOM
+    setupMutationObserver();
+    
+    // Notificar que estamos listos
+    setTimeout(notifyReady, 500);
+    
+    // Intentar detectar campos de login
+    setTimeout(añadirIconosACamposLogin, 1000);
+    
+    // Si estamos en Google, forzar la comprobación de credenciales
+    if (esGoogle) {
+      setTimeout(() => {
+        logMessage('Forzando comprobación de credenciales en sitio Google', 'info', true);
+        
+        // Simular credenciales para prueba
+        const testUrl = window.location.href;
+        const testUser = 'usuario.prueba@gmail.com';
+        
+        // Forzar la activación del diálogo de guardar credenciales
+        logMessage('Forzando mostrar diálogo de guardar credenciales para pruebas', 'info', true);
+        
+        // Sólo mostrar el diálogo si no hay uno visible ya
+        if (!window.passwdDialogShowing) {
+          mostrarDialogoGuardarCredenciales(testUrl, testUser, 'contraseña-prueba');
+        }
+      }, 3000);
+    }
+    
+    // Iniciar detección de formularios
+    detectarEnvioFormularios();
+    
+    // Log de inicialización completada
+    logMessage('Inicialización de content script completada', 'success', true);
+  } catch (e) {
+    console.error('Error en inicialización de content script:', e);
+  }
+}

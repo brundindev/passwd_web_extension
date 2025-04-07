@@ -1,22 +1,36 @@
 {
     "manifest_version": 3,
     "name": "PASSWD Web Extension",
-    "version": "1.0",
+    "version": "1.1",
     "description": "Extensión para autocompletar los formularios de login desde el gestor de contraseñas PASSWD.",
     "permissions": [
       "storage", 
       "activeTab", 
       "scripting", 
       "tabs",
-      "webRequest"
+      "webRequest",
+      "identity",
+      "notifications"
     ],
     "host_permissions": [
-      "https://*/*", 
+      "https://*/*",
       "http://*/*", 
-      "http://localhost:8080/*"
+      "http://localhost:8080/*",
+      "https://*.firebaseio.com/*",
+      "https://passwd-brundindev.firebaseapp.com/*",
+      "https://*.firebase.com/*",
+      "https://*.googleapis.com/*"
     ],
+    "action": {
+      "default_popup": "login.html",
+      "default_icon": "icons/logo_passwd.JPEG"
+    },
+    "icons": {
+
+    },
     "background": {
-      "service_worker": "background.js"
+      "service_worker": "background.js",
+      "type": "module"
     },
     "content_scripts": [
       {
@@ -26,17 +40,18 @@
         "all_frames": true
       }
     ],
-    "action": {
-      "default_popup": "popup.html",
-      "default_icon": "icons/logo_passwd.JPEG"
-    },
     "web_accessible_resources": [
       {
-        "resources": ["icons/*"],
+        "resources": [
+          "firebase/*.js",
+          "firebase/*.js.map",
+          "firebase_service.js",
+          "icons/*"
+        ],
         "matches": ["<all_urls>"]
       }
     ],
     "content_security_policy": {
-      "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http://localhost:8080"
+      "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http://localhost:8080 https://*.firebaseio.com https://*.firebase.googleapis.com https://identitytoolkit.googleapis.com"
     }
   }

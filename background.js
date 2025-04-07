@@ -2,11 +2,31 @@
 chrome.runtime.onInstalled.addListener((details) => {
   console.log('Extension PASSWD instalada o actualizada:', details.reason);
   
-  // No precargar credenciales para evitar errores
-  // precargarCredenciales().catch(e => {
-  //   console.error('Error en precarga de credenciales:', e);
-  // });
+  // Configurar popup según estado de autenticación
+  chrome.storage.local.get('userAuthenticated', (data) => {
+    if (data.userAuthenticated) {
+      chrome.action.setPopup({ popup: 'popup.html' });
+    } else {
+      chrome.action.setPopup({ popup: 'login.html' });
+    }
+  });
 });
+
+// Verifica estado de autenticación al arrancar la extensión
+chrome.runtime.onStartup.addListener(() => {
+  checkAuthenticationAndRedirect();
+});
+
+// Función para verificar autenticación
+function checkAuthenticationAndRedirect() {
+  chrome.storage.local.get('userAuthenticated', (data) => {
+    if (data.userAuthenticated) {
+      chrome.action.setPopup({ popup: 'popup.html' });
+    } else {
+      chrome.action.setPopup({ popup: 'login.html' });
+    }
+  });
+}
 
 // Log cuando la extensión se inicia
 console.log('Servicio background de PASSWD iniciado en:', new Date().toISOString());
@@ -142,128 +162,204 @@ function guardarCredencialesEnCache(dominio, credenciales) {
   }
 }
 
-// Función para guardar nuevas credenciales en el servidor
-async function guardarNuevasCredenciales(credencial) {
+// Cargar scripts de Firebase de forma más robusta
+function loadFirebaseScripts() {
   try {
-    console.log('Guardando nuevas credenciales:', credencial);
+    // Usar rutas absolutas con chrome.runtime.getURL para evitar problemas de importación
+    const appScriptUrl = chrome.runtime.getURL('firebase/firebase-app-compat.js');
+    const authScriptUrl = chrome.runtime.getURL('firebase/firebase-auth-compat.js');
+    const firestoreScriptUrl = chrome.runtime.getURL('firebase/firebase-firestore-compat.js');
+
+    // Log para depuración
+    console.log('Intentando cargar Firebase desde URLs:');
+    console.log('- App:', appScriptUrl);
+    console.log('- Auth:', authScriptUrl);
+    console.log('- Firestore:', firestoreScriptUrl);
     
-    // Formato esperado por el servidor
-    const datosAGuardar = {
-      sitio: credencial.sitio,
-      usuario: credencial.usuario,
-      password: credencial.password
-    };
+    // Usar importScripts con las rutas absolutas
+    importScripts(appScriptUrl);
+    importScripts(authScriptUrl);
+    importScripts(firestoreScriptUrl);
     
-    // URL del servidor para guardar credenciales - construir explícitamente con API_PATH
-    let url;
-    if (FLUTTER_SERVER.API_PATH) {
-      // Usar API_PATH explícitamente si está definido
-      url = `http://${FLUTTER_SERVER.HOST}:${FLUTTER_SERVER.PORT}${FLUTTER_SERVER.API_PATH}/guardar-credencial`;
-      console.log('Construyendo URL con API_PATH explícito:', url);
-    } else {
-      // Usar la función normal si no hay API_PATH
-      url = getServerUrl(FLUTTER_SERVER.SAVE_CREDENTIAL_ENDPOINT);
-    }
-    
-    console.log('Enviando petición a:', url);
-    console.log('Datos a enviar:', JSON.stringify(datosAGuardar));
-    
-    // Primero intentamos hacer un ping al servidor para verificar conexión
-    try {
-      const statusUrl = getServerUrl(FLUTTER_SERVER.STATUS_ENDPOINT);
-      console.log('Verificando estado del servidor en:', statusUrl);
-      
-      const statusResponse = await fetch(statusUrl);
-      console.log('Respuesta de status:', statusResponse.status, statusResponse.statusText);
-      
-      if (statusResponse.ok) {
-        console.log('Servidor está activo y respondiendo');
-        
-        try {
-          // Intentamos obtener más información sobre la estructura de la API
-          const statusData = await statusResponse.json();
-          console.log('Datos de status:', statusData);
-        } catch (parseError) {
-          console.warn('No se pudo parsear la respuesta de status:', parseError);
-        }
-      } else {
-        console.warn('Servidor no responde correctamente al status check');
-      }
-    } catch (pingError) {
-      console.error('Error al hacer ping al servidor:', pingError);
-    }
-    
-    // Probar todas las combinaciones posibles de endpoints
-    const endpointsToTry = [
-      // 1. URL principal construida arriba
-      { url, method: 'POST' },
-      
-      // 2. Con guion como está configurado en FLUTTER_SERVER
-      { url: `http://${FLUTTER_SERVER.HOST}:${FLUTTER_SERVER.PORT}/guardar-credencial`, method: 'POST' },
-      
-      // 3. Con guion bajo (versión alternativa)
-      { url: `http://${FLUTTER_SERVER.HOST}:${FLUTTER_SERVER.PORT}/guardar_credencial`, method: 'POST' },
-      
-      // 4. Con API_PATH y guion
-      { url: `http://${FLUTTER_SERVER.HOST}:${FLUTTER_SERVER.PORT}${FLUTTER_SERVER.API_PATH}/guardar-credencial`, method: 'POST' },
-      
-      // 5. Con API_PATH y guion bajo
-      { url: `http://${FLUTTER_SERVER.HOST}:${FLUTTER_SERVER.PORT}${FLUTTER_SERVER.API_PATH}/guardar_credencial`, method: 'POST' }
-    ];
-    
-    // Iteramos por todas las combinaciones hasta que una funcione
-    let lastError = null;
-    for (const endpoint of endpointsToTry) {
-      try {
-        console.log(`Intentando guardar con: ${endpoint.url}`);
-        
-        const response = await fetch(endpoint.url, {
-          method: endpoint.method,
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(datosAGuardar)
-        });
-        
-        console.log(`Respuesta recibida: ${response.status} ${response.statusText}`);
-        
-        if (response.ok) {
-          const resultado = await response.json();
-          console.log('¡Éxito! Respuesta del servidor:', resultado);
-          
-          // Invalidamos la caché para este dominio para que se actualice
-          const dominio = credencial.sitio;
-          if (credencialesCache.has(dominio)) {
-            console.log(`Invalidando caché para ${dominio} tras guardar nueva credencial`);
-            credencialesCache.delete(dominio);
-          }
-          
-          return { success: true, data: resultado };
-        }
-        
-        // Si no tuvo éxito, guardamos el error y seguimos intentando
-        const errorText = await response.text();
-        lastError = `Error del servidor (${response.status}): ${errorText}`;
-        console.error('Intento fallido:', lastError);
-      } catch (error) {
-        console.error(`Error al intentar con ${endpoint.url}:`, error);
-        lastError = `Error: ${error.message}`;
-      }
-    }
-    
-    // Si llegamos aquí, todos los intentos fallaron
-    console.error('Todos los intentos de guardar credenciales fallaron');
-    return { success: false, error: lastError || 'No se pudo conectar con el servidor' };
-  } catch (error) {
-    console.error('Error al guardar credenciales:', error);
-    return { success: false, error: `Error: ${error.message}` };
+    console.log('Scripts de Firebase cargados correctamente en background.js');
+    return true;
+  } catch (e) {
+    console.error('Error al cargar scripts de Firebase en background.js:', e);
+    return false;
   }
 }
 
-// Escuchar mensajes del content script o popup
-chrome.runtime.onMessage.addListener((mensaje, sender, sendResponse) => {
-  console.log('Mensaje recibido en background:', mensaje);
+// Intentar cargar los scripts de Firebase
+const firebaseLoaded = loadFirebaseScripts();
+if (!firebaseLoaded) {
+  console.error('No se pudieron cargar los scripts de Firebase. Algunas funcionalidades no estarán disponibles.');
+}
 
+// Inicializar Firebase
+try {
+  importScripts('firebase_service.js');
+  
+  let firebaseService = null;
+  try {
+    if (typeof FirebaseService !== 'undefined') {
+      firebaseService = new FirebaseService();
+      console.log('FirebaseService inicializado en background.js');
+    } else {
+      console.error('FirebaseService no está definido, asegúrate de que firebase_service.js se carga antes que background.js');
+    }
+  } catch (e) {
+    console.error('Error al inicializar FirebaseService:', e);
+  }
+} catch (e) {
+  console.error('Error al importar firebase_service.js:', e);
+}
+
+// Función para guardar credenciales en Firebase
+async function guardarCredencialesEnFirebase(credencial) {
+  console.log('Iniciando guardarCredencialesEnFirebase:', credencial ? credencial.sitio : 'credencial vacía');
+  
+  // Verificar datos completos
+  if (!credencial || !credencial.sitio || !credencial.usuario || !credencial.contraseña) {
+    console.error('Error: Credenciales incompletas', credencial);
+    return { success: false, error: 'Datos incompletos' };
+  }
+  
+  try {
+    // Verificar si Firebase está cargado
+    let firebaseReady = typeof firebase !== 'undefined' && firebase.apps.length > 0;
+    console.log('Estado inicial de Firebase:', firebaseReady ? 'Listo' : 'No inicializado');
+    
+    // Si Firebase no está cargado, intentar cargarlo
+    if (!firebaseReady) {
+      console.log('Intentando cargar Firebase...');
+      try {
+        // Cargar scripts de Firebase usando rutas absolutas
+        const appScriptUrl = chrome.runtime.getURL('firebase/firebase-app-compat.js');
+        const authScriptUrl = chrome.runtime.getURL('firebase/firebase-auth-compat.js');
+        const firestoreScriptUrl = chrome.runtime.getURL('firebase/firebase-firestore-compat.js');
+        
+        console.log('Cargando scripts de Firebase desde:', appScriptUrl);
+        importScripts(appScriptUrl);
+        importScripts(authScriptUrl);
+        importScripts(firestoreScriptUrl);
+        
+        // Verificar si se cargó correctamente
+        if (typeof firebase === 'undefined') {
+          console.error('Error crítico: No se pudieron cargar los scripts de Firebase');
+          return { success: false, error: 'No se pudieron cargar los scripts de Firebase' };
+        }
+        
+        console.log('Scripts de Firebase cargados correctamente');
+        
+        // Inicializar Firebase si es necesario
+        if (!firebase.apps.length) {
+          console.log('Inicializando Firebase...');
+          const firebaseConfig = {
+            apiKey: "AIzaSyDYSZWktCMW2u_pzpYBi_A_ZszwQRyk6ac",
+            authDomain: "passwd-brundindev.firebaseapp.com",
+            projectId: "passwd-brundindev",
+            storageBucket: "passwd-brundindev.firebasestorage.app",
+            messagingSenderId: "252776703139",
+            appId: "1:252776703139:web:60db327548b9f10d564b16"
+          };
+          
+          firebase.initializeApp(firebaseConfig);
+          console.log('Firebase inicializado correctamente');
+        }
+        
+        firebaseReady = true;
+      } catch (error) {
+        console.error('Error al cargar o inicializar Firebase:', error);
+        return { success: false, error: 'Error al cargar Firebase: ' + error.message };
+      }
+    }
+    
+    // Verificar si el usuario está autenticado
+    console.log('Verificando autenticación del usuario...');
+    const user = firebase.auth().currentUser;
+    
+    if (!user) {
+      console.error('Error: Usuario no autenticado');
+      return { success: false, error: 'Debes iniciar sesión para guardar credenciales' };
+    }
+    
+    console.log('Usuario autenticado:', user.uid, user.email);
+    
+    // Crear una referencia a la colección donde guardaremos las credenciales
+    // Siguiendo la estructura /usuarios/{userId}/pass/{documentId}
+    const userId = user.uid;
+    const db = firebase.firestore();
+    
+    // Usar la colección correcta según las reglas de seguridad
+    const passCollection = db.collection('usuarios').doc(userId).collection('pass');
+    
+    console.log('Guardando credencial en Firestore, colección:', `usuarios/${userId}/pass`);
+    
+    // Verificar si ya existe esta credencial
+    const querySnapshot = await passCollection
+      .where('sitio', '==', credencial.sitio)
+      .where('usuario', '==', credencial.usuario)
+      .get();
+    
+    let docRef;
+    
+    if (!querySnapshot.empty) {
+      // Ya existe, actualizar
+      docRef = querySnapshot.docs[0].ref;
+      console.log('Actualizando credencial existente, ID:', docRef.id);
+      
+      await docRef.update({
+        sitio: credencial.sitio,
+        usuario: credencial.usuario,
+        contraseña: credencial.contraseña,
+        actualizado: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      
+      console.log('Credencial actualizada correctamente');
+      return { success: true, updated: true, id: docRef.id };
+    } else {
+      // No existe, crear nueva
+      console.log('Creando nueva credencial');
+      
+      // Añadir timestamps
+      const credencialConTimestamp = {
+        ...credencial,
+        creado: firebase.firestore.FieldValue.serverTimestamp(),
+        actualizado: firebase.firestore.FieldValue.serverTimestamp()
+      };
+      
+      const newDocRef = await passCollection.add(credencialConTimestamp);
+      console.log('Credencial creada correctamente, ID:', newDocRef.id);
+      
+      return { success: true, updated: false, id: newDocRef.id };
+    }
+  } catch (error) {
+    console.error('Error general al guardar credenciales:', error);
+    
+    // Categorizar los errores para respuestas más útiles
+    let errorMessage = error.message || 'Error desconocido';
+    
+    if (errorMessage.includes('permission-denied') || errorMessage.includes('permission denied')) {
+      errorMessage = 'Error de permisos. Verifica que has iniciado sesión.';
+    } else if (errorMessage.includes('network')) {
+      errorMessage = 'Error de red. Verifica tu conexión a internet.';
+    } else if (errorMessage.includes('quota')) {
+      errorMessage = 'Error de cuota excedida. Intenta más tarde.';
+    }
+    
+    return { success: false, error: errorMessage };
+  }
+}
+
+// Almacenamiento global para credenciales pendientes de guardar
+// Usamos una variable global, NO window.pendingCredentials que causa problemas
+var pendingCredentials = new Map();
+
+// Manejador de mensajes de la extensión
+chrome.runtime.onMessage.addListener(function(mensaje, sender, sendResponse) {
+  console.log('Mensaje recibido en background:', mensaje);
+  console.log('Sender:', sender);
+  
   // Si el mensaje es para verificar si la extensión está activa
   if (mensaje.action === 'ping') {
     sendResponse({ status: 'ok', message: 'PASSWD Extension activa' });
@@ -437,7 +533,7 @@ chrome.runtime.onMessage.addListener((mensaje, sender, sendResponse) => {
             console.error('Error al comunicar con content script, inyectando script...', e);
             
             // Intentar inyectar el content script
-            chrome.scripting.executeScript({
+      chrome.scripting.executeScript({
               target: { tabId: mensaje.tabId },
               files: ['content.js']
             })
@@ -489,21 +585,51 @@ chrome.runtime.onMessage.addListener((mensaje, sender, sendResponse) => {
       const credencial = mensaje.credencial;
       console.log('Procesando solicitud para guardar nuevas credenciales:', credencial.sitio);
       
-      // Realizar la petición al servidor para guardar las credenciales
-      guardarNuevasCredenciales(credencial)
+      // Log adicional para depuración
+      console.log('Detalles de credencial a guardar:', {
+        sitio: credencial.sitio,
+        usuario: credencial.usuario,
+        contraseña: credencial.contraseña ? '******' : 'vacía',
+        estructura: JSON.stringify(credencial)
+      });
+      
+      // Realizar la petición para guardar las credenciales directamente
+      guardarCredencialesEnFirebase(credencial)
         .then(resultado => {
           console.log('Resultado de guardar credenciales:', resultado);
+          
+          // Si hay error de autenticación, intentar mostrar popup de login
+          if (!resultado.success && resultado.error && 
+              (resultado.error.includes('autenticado') || resultado.error.includes('iniciar sesión'))) {
+            console.log('Error de autenticación, intentando mostrar popup de login');
+            try {
+              // Cambiar el popup activo al de login
+              chrome.action.setPopup({ popup: 'login.html' }, () => {
+                if (chrome.runtime.lastError) {
+                  console.error('Error al cambiar popup:', chrome.runtime.lastError);
+                } else {
+                  console.log('Popup cambiado a login.html');
+                  // Intentar abrir el popup
+                  try {
+                    chrome.action.openPopup();
+                  } catch (popupErr) {
+                    console.warn('No se pudo abrir el popup automáticamente');
+                  }
+                }
+              });
+            } catch (popupErr) {
+              console.error('Error al intentar mostrar popup de login:', popupErr);
+            }
+          }
+          
           sendResponse(resultado);
         })
         .catch(error => {
-          console.error('Error al guardar credenciales:', error);
-          sendResponse({ 
-            success: false, 
-            error: error.message || 'Error desconocido al guardar credenciales' 
-          });
+          console.error('Error al guardar credenciales en Firebase:', error);
+          sendResponse({ success: false, error: error.message || 'Error desconocido al guardar' });
         });
       
-      return true; // Indicar que la respuesta se enviará de forma asíncrona
+      return true; // Indicar que sendResponse se llamará de forma asíncrona
     } catch (e) {
       console.error('Error al procesar guardar_credenciales:', e);
       sendResponse({ success: false, error: e.message });
@@ -511,9 +637,312 @@ chrome.runtime.onMessage.addListener((mensaje, sender, sendResponse) => {
     }
   }
   
+  // Manejador para mostrar el popup de login cuando se solicita
+  if (mensaje.action === 'show_login_popup') {
+    try {
+      console.log('Solicitando cambio a popup de login');
+      
+      // Cambiar el popup activo al de login
+      chrome.action.setPopup({ popup: 'login.html' }, () => {
+        if (chrome.runtime.lastError) {
+          console.error('Error al cambiar popup:', chrome.runtime.lastError);
+          sendResponse({ success: false, error: chrome.runtime.lastError.message });
+        } else {
+          console.log('Popup cambiado a login.html');
+          sendResponse({ success: true });
+          
+          // Intentar abrir el popup para que el usuario inicie sesión
+          try {
+            chrome.action.openPopup();
+          } catch (e) {
+            console.log('No se pudo abrir el popup automáticamente, el usuario deberá hacerlo manualmente');
+          }
+        }
+      });
+      
+      return true; // Indicar que la respuesta se enviará de forma asíncrona
+    } catch (e) {
+      console.error('Error al procesar solicitud de login popup:', e);
+      sendResponse({ success: false, error: e.message });
+      return true;
+    }
+  }
+  
+  // Manejador para mostrar notificación de guardado
+  if (mensaje.action === 'show_save_notification') {
+    try {
+      if (!mensaje.data || !mensaje.data.sitio || !mensaje.data.usuario) {
+        console.warn('Datos incompletos para notificación');
+        sendResponse({ success: false, error: 'Datos incompletos' });
+        return true;
+      }
+      
+      console.log('Mostrando notificación del sistema para guardar credenciales');
+      console.log('Datos de la notificación:', mensaje.data);
+      
+      // Usar la variable global pendingCredentials directamente, no window.pendingCredentials
+      console.log('Estado actual de pendingCredentials:', pendingCredentials ? 
+               `Map con ${pendingCredentials.size} elementos` : 
+               'No definido');
+      
+      // Crear un ID único para esta notificación
+      const notificationId = `passwd_save_${Date.now()}`;
+      
+      // Mostrar notificación
+      chrome.notifications.create(notificationId, {
+        type: 'basic',
+        iconUrl: chrome.runtime.getURL('icons/logo_passwd.JPEG'),
+        title: 'PASSWD - Guardar Credenciales',
+        message: `¿Deseas guardar la contraseña para ${mensaje.data.usuario} en ${mensaje.data.sitio}?`,
+        buttons: [
+          { title: 'Guardar' },
+          { title: 'Cancelar' }
+        ],
+        priority: 2,
+        requireInteraction: true // Mantener la notificación hasta que el usuario interactúe
+      }, (notificationIdCreated) => {
+        if (chrome.runtime.lastError) {
+          console.error('Error al crear notificación:', chrome.runtime.lastError);
+          sendResponse({ success: false, error: chrome.runtime.lastError.message });
+        } else {
+          console.log('Notificación mostrada con ID:', notificationIdCreated);
+          sendResponse({ success: true, notificationId: notificationIdCreated });
+        }
+      });
+      
+      return true; // Indicar que se enviará respuesta asíncrona
+    } catch (e) {
+      console.error('Error al mostrar notificación:', e);
+      sendResponse({ success: false, error: e.message });
+      return true;
+    }
+  }
+  
+  // Mensaje para preparar credenciales para guardar
+  if (mensaje.action === 'prepare_credentials') {
+    try {
+      if (!mensaje.credencial || !mensaje.credencial.sitio || !mensaje.credencial.usuario || !mensaje.credencial.contraseña) {
+        console.warn('Credenciales incompletas para preparar guardado');
+        sendResponse({ success: false, error: 'Credenciales incompletas' });
+        return true;
+      }
+      
+      console.log('Mensaje prepare_credentials recibido:', mensaje.credencial);
+      
+      // Generar un ID basado en el sitio y usuario
+      const credentialId = `${mensaje.credencial.sitio}_${mensaje.credencial.usuario}`;
+      
+      // Guardar las credenciales temporalmente usando nuestra variable global
+      pendingCredentials.set(credentialId, {
+        credencial: mensaje.credencial,
+        timestamp: Date.now()
+      });
+      
+      console.log('Credenciales preparadas para guardar con ID:', credentialId);
+      console.log('Estado de pendingCredentials:', 
+                 `Map con ${pendingCredentials.size} elementos`);
+      
+      // Configurar un timer para limpiar las credenciales después de 5 minutos
+      setTimeout(() => {
+        if (pendingCredentials.has(credentialId)) {
+          console.log('Limpiando credenciales preparadas (timeout) para:', credentialId);
+          pendingCredentials.delete(credentialId);
+        }
+      }, 5 * 60 * 1000);
+      
+      sendResponse({ success: true, id: credentialId });
+    } catch (e) {
+      console.error('Error al preparar credenciales:', e);
+      sendResponse({ success: false, error: e.message });
+    }
+    
+    return true;
+  }
+  
+  // Añadir handler para cerrar sesión
+  if (mensaje.action === 'logout_user') {
+    try {
+      console.log('Procesando solicitud de cierre de sesión');
+      
+      // Verificar si Firebase está disponible
+      if (typeof firebase === 'undefined' || !firebase.apps.length) {
+        // Intentar cargar Firebase
+        try {
+          // Cargar scripts de Firebase usando rutas absolutas
+          const appScriptUrl = chrome.runtime.getURL('firebase/firebase-app-compat.js');
+          const authScriptUrl = chrome.runtime.getURL('firebase/firebase-auth-compat.js');
+          
+          importScripts(appScriptUrl);
+          importScripts(authScriptUrl);
+          
+          // Verificar si se cargó correctamente
+          if (typeof firebase === 'undefined') {
+            console.error('No se pudo cargar Firebase para cerrar sesión');
+            sendResponse({ success: false, error: 'No se pudo cargar Firebase' });
+            return true;
+          }
+          
+          // Inicializar Firebase si es necesario
+          if (!firebase.apps.length) {
+            const firebaseConfig = {
+              apiKey: "AIzaSyDYSZWktCMW2u_pzpYBi_A_ZszwQRyk6ac",
+              authDomain: "passwd-brundindev.firebaseapp.com",
+              projectId: "passwd-brundindev",
+              storageBucket: "passwd-brundindev.firebasestorage.app",
+              messagingSenderId: "252776703139",
+              appId: "1:252776703139:web:60db327548b9f10d564b16"
+            };
+            
+            firebase.initializeApp(firebaseConfig);
+          }
+        } catch (error) {
+          console.error('Error al cargar Firebase para cerrar sesión:', error);
+          sendResponse({ success: false, error: error.message });
+          return true;
+        }
+      }
+      
+      // Intentar usar firebaseService si está disponible
+      if (typeof firebaseService !== 'undefined') {
+        console.log('Usando firebaseService para cerrar sesión');
+        firebaseService.logout()
+          .then(result => {
+            console.log('Resultado de cierre de sesión:', result);
+            
+            if (result.success) {
+              // Actualizar storage
+              chrome.storage.local.set({ 'userAuthenticated': false }, () => {
+                // Cambiar popup
+                chrome.action.setPopup({ popup: 'login.html' });
+                sendResponse({ success: true });
+              });
+            } else {
+              sendResponse({ success: false, error: result.error });
+            }
+          })
+          .catch(error => {
+            console.error('Error al cerrar sesión con firebaseService:', error);
+            sendResponse({ success: false, error: error.message });
+          });
+      } else {
+        // Usar Firebase directamente
+        console.log('Usando Firebase auth directamente para cerrar sesión');
+        firebase.auth().signOut()
+          .then(() => {
+            console.log('Sesión cerrada correctamente');
+            
+            // Actualizar storage
+            chrome.storage.local.set({ 'userAuthenticated': false }, () => {
+              // Cambiar popup
+              chrome.action.setPopup({ popup: 'login.html' });
+              sendResponse({ success: true });
+            });
+          })
+          .catch(error => {
+            console.error('Error al cerrar sesión:', error);
+            sendResponse({ success: false, error: error.message });
+          });
+      }
+      
+      return true; // Indicar que se enviará respuesta asíncrona
+    } catch (error) {
+      console.error('Error general al procesar cierre de sesión:', error);
+      sendResponse({ success: false, error: error.message });
+      return true;
+    }
+  }
+  
   // Si llegamos aquí, no se procesó el mensaje
   sendResponse({ error: 'Mensaje no reconocido' });
   return true;
+});
+
+// Escuchar clics en notificaciones
+chrome.notifications.onButtonClicked.addListener((notificationId, buttonIndex) => {
+  console.log(`Clic en botón ${buttonIndex} de notificación ${notificationId}`);
+  
+  // Verificar que es una notificación de PASSWD
+  if (notificationId.startsWith('passwd_save_')) {
+    console.log(`Estado de pendingCredentials: Map con ${pendingCredentials.size} elementos`);
+    
+    if (buttonIndex === 0) {
+      // Botón Guardar (primer botón)
+      console.log('Usuario eligió guardar credenciales');
+      
+      // Buscar las credenciales guardadas temporalmente
+      const credentials = Array.from(pendingCredentials.values())
+        .sort((a, b) => b.timestamp - a.timestamp) // Ordenar por timestamp, más reciente primero
+        .map(entry => entry.credencial);
+      
+      console.log(`Se encontraron ${credentials.length} credenciales pendientes`);
+      
+      if (credentials.length > 0) {
+        // Tomar la credencial más reciente
+        const credencial = credentials[0];
+        console.log('Guardando credencial para:', credencial.sitio);
+        
+        // Guardar la credencial
+        guardarCredencialesEnFirebase(credencial)
+          .then(resultado => {
+            console.log('Resultado de guardar credenciales:', resultado);
+            
+            // Mostrar notificación de resultado
+            chrome.notifications.create({
+              type: 'basic',
+              iconUrl: chrome.runtime.getURL('icons/logo_passwd.JPEG'),
+              title: 'PASSWD - Resultado',
+              message: resultado.success ? 
+                'Credenciales guardadas correctamente.' : 
+                `Error al guardar: ${resultado.error || 'Desconocido'}`,
+              priority: 1
+            });
+            
+            // Limpiar todas las credenciales pendientes
+            pendingCredentials.clear();
+          })
+          .catch(error => {
+            console.error('Error al guardar credenciales:', error);
+            
+            // Mostrar error
+            chrome.notifications.create({
+              type: 'basic',
+              iconUrl: chrome.runtime.getURL('icons/logo_passwd.JPEG'),
+              title: 'PASSWD - Error',
+              message: `Error al guardar: ${error.message || 'Desconocido'}`,
+              priority: 1
+            });
+          });
+      } else {
+        console.error('No se encontraron credenciales pendientes');
+        
+        chrome.notifications.create({
+          type: 'basic',
+          iconUrl: chrome.runtime.getURL('icons/logo_passwd.JPEG'),
+          title: 'PASSWD - Error',
+          message: 'No se encontraron credenciales para guardar.',
+          priority: 1
+        });
+      }
+    } else {
+      // Botón Cancelar (segundo botón)
+      console.log('Usuario eligió cancelar guardado de credenciales');
+      
+      // Limpiar las credenciales pendientes
+      pendingCredentials.clear();
+      
+      // Informar al usuario
+      chrome.notifications.create({
+        type: 'basic',
+        iconUrl: chrome.runtime.getURL('icons/logo_passwd.JPEG'),
+        title: 'PASSWD - Cancelado',
+        message: 'Guardado de credenciales cancelado.',
+        priority: 1
+      });
+    }
+    
+    // Cerrar la notificación
+    chrome.notifications.clear(notificationId);
+  }
 });
 
 // Función para obtener credenciales del servidor local

@@ -192,6 +192,13 @@
 <body>
   <h1>PASSWD Extension</h1>
   
+  <div id="userInfo" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding: 10px; background-color: #333; border-radius: 8px; border: 1px solid #444;">
+    <div>
+      <div style="font-weight: 600; color: #fff;">Usuario:</div>
+      <div id="userEmail" style="color: #aaa; font-size: 13px; overflow: hidden; text-overflow: ellipsis; max-width: 220px;">No conectado</div>
+    </div>
+    <button id="logoutButton" style="margin-top: 0; width: auto; background-color: #ed2626; padding: 8px 12px; font-size: 12px;">Cerrar sesión</button>
+  </div>
   <div class="site-info">
     <img src="icons/logo_passwd.JPEG" class="site-icon" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2216%22 height=%2216%22><rect width=%2216%22 height=%2216%22 fill=%22%234285F4%22 /><text x=%228%22 y=%2212%22 font-size=%2212%22 text-anchor=%22middle%22 fill=%22white%22>P</text></svg>'">
     <span>Sitio actual: <span id="currentSite">Cargando...</span></span>
