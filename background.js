@@ -1,3 +1,22 @@
+// Importar Firebase
+import './firebase/firebase-app-compat.js';
+import './firebase/firebase-auth-compat.js'; 
+import './firebase/firebase-firestore-compat.js';
+
+// Importar FirebaseService desde el módulo
+import { FirebaseService, firebaseService as importedFirebaseService } from './firebase_service.js';
+
+// Registrar éxito de importaciones
+console.log('Firebase y FirebaseService importados correctamente como módulos ES6');
+
+// Variables globales para el script
+const contentScriptsReady = new Map();  // Mapeo de tab ID a estado de contenido
+const credencialesCache = new Map();    // Caché de credenciales por dominio
+const formFillResponses = new Map();    // Callbacks de respuestas para llenado de formularios
+const pendingNotificationsCredentials = new Map(); // Mapa para credenciales pendientes de guardar
+let firebaseInitializationAttempts = 0;  // Contador de intentos de inicialización
+let firebaseService = importedFirebaseService;  // Usar la instancia importada
+
 // Registra eventos de instalación y actualización
 chrome.runtime.onInstalled.addListener((details) => {
   console.log('Extension PASSWD instalada o actualizada:', details.reason);
@@ -10,12 +29,91 @@ chrome.runtime.onInstalled.addListener((details) => {
       chrome.action.setPopup({ popup: 'login.html' });
     }
   });
+  
+  // Inicializar Firebase inmediatamente en la instalación
+  initializeFirebaseWithRetry().then(() => {
+    // Ejecutar diagnóstico después de inicializar
+    setTimeout(diagnosticarEstadoFirebase, 1000);
+    
+    // Intentar login automático si corresponde
+    setTimeout(intentarLoginAutomatico, 2000);
+  });
 });
 
 // Verifica estado de autenticación al arrancar la extensión
 chrome.runtime.onStartup.addListener(() => {
   checkAuthenticationAndRedirect();
+  
+  // Inicializar Firebase inmediatamente al arrancar
+  initializeFirebaseWithRetry().then(() => {
+    // Ejecutar diagnóstico después de inicializar
+    setTimeout(diagnosticarEstadoFirebase, 1000);
+    
+    // Intentar login automático si corresponde
+    setTimeout(intentarLoginAutomatico, 2000);
+  });
 });
+
+// Función para inicializar Firebase con reintentos
+async function initializeFirebaseWithRetry(delay = 2000, maxAttempts = 3) {
+  console.log(`Intento de inicialización de Firebase #${firebaseInitializationAttempts + 1}`);
+  
+  // Verificar si Firebase ya está cargado
+  const firebaseLoaded = typeof firebase !== 'undefined' && firebase.apps.length > 0;
+  if (!firebaseLoaded) {
+    console.error('Firebase no está disponible aunque debería estar importado como módulo ES6.');
+    
+    // Programar reintento si no excedimos el número máximo
+    if (firebaseInitializationAttempts < maxAttempts) {
+      firebaseInitializationAttempts++;
+      console.log(`Programando reintento en ${delay}ms...`);
+      setTimeout(() => initializeFirebaseWithRetry(delay * 2, maxAttempts), delay);
+    }
+    return;
+  }
+  
+  // Intentar inicializar o usar FirebaseService
+  try {
+    // En el archivo firebase_service.js se crea una variable global 'firebaseService'
+    if (typeof self.firebaseService !== 'undefined') {
+      // En service workers, usamos 'self' en lugar de 'window'
+      firebaseService = self.firebaseService;
+      console.log('Usando instancia global de FirebaseService de self.firebaseService');
+      firebaseInitializationAttempts = 0;
+      return;
+    } else if (typeof firebaseService !== 'undefined' && firebaseService !== null) {
+      // Si la variable global ya está directamente disponible
+      console.log('Variable global firebaseService ya disponible');
+      firebaseInitializationAttempts = 0;
+      return;
+    } else if (typeof FirebaseService !== 'undefined') {
+      // Si la clase está disponible pero no hay instancia, la creamos
+      if (!firebaseService) {
+        firebaseService = new FirebaseService();
+        console.log('FirebaseService inicializado correctamente');
+      }
+      firebaseInitializationAttempts = 0;
+    } else {
+      console.error('No se encontró la variable global firebaseService ni la clase FirebaseService');
+      
+      // Programar reintento
+      if (firebaseInitializationAttempts < maxAttempts) {
+        firebaseInitializationAttempts++;
+        console.log(`Programando reintento en ${delay}ms...`);
+        setTimeout(() => initializeFirebaseWithRetry(delay * 2, maxAttempts), delay);
+      }
+    }
+  } catch (e) {
+    console.error('Error al inicializar FirebaseService:', e);
+    
+    // Programar reintento
+    if (firebaseInitializationAttempts < maxAttempts) {
+      firebaseInitializationAttempts++;
+      console.log(`Programando reintento en ${delay}ms...`);
+      setTimeout(() => initializeFirebaseWithRetry(delay * 2, maxAttempts), delay);
+    }
+  }
+}
 
 // Función para verificar autenticación
 function checkAuthenticationAndRedirect() {
@@ -31,61 +129,37 @@ function checkAuthenticationAndRedirect() {
 // Log cuando la extensión se inicia
 console.log('Servicio background de PASSWD iniciado en:', new Date().toISOString());
 
-// Variables globales para tracking
-const credencialesCache = new Map();
-const contentScriptsReady = new Map();
-const formFillResponses = new Map();
-
-// Configuración de la conexión al servicio Flutter
-const FLUTTER_SERVER = {
-  HOST: 'localhost',
-  PORT: 8080,
-  API_PATH: '/api', // Cambiar esto si la ruta API es diferente en tu servicio Flutter
-  SEARCH_ENDPOINT: '/search',
-  STATUS_ENDPOINT: '/status',
-  GET_CREDENTIALS_ENDPOINT: '/get-credentials', // Endpoint original que podría estar usando
-  SAVE_CREDENTIAL_ENDPOINT: '/guardar-credencial' // Cambiado a guion para seguir el patrón de get-credentials
-};
-
-// Función para construir URLs del servidor
-function getServerUrl(endpoint, queryParams = {}) {
-  // Determinar si hay que incluir el API_PATH
-  let fullEndpoint = endpoint;
-  
-  // Si el endpoint no empieza con / o con el API_PATH, añadir el API_PATH
-  if (!endpoint.startsWith('/')) {
-    fullEndpoint = '/' + endpoint;
-  }
-  
-  // Si el endpoint es uno de los definidos en FLUTTER_SERVER y no comienza ya con API_PATH
-  if (endpoint !== FLUTTER_SERVER.STATUS_ENDPOINT && 
-      !fullEndpoint.startsWith(FLUTTER_SERVER.API_PATH)) {
-    const usesDefinedEndpoint = Object.values(FLUTTER_SERVER).includes(endpoint);
-    
-    if (usesDefinedEndpoint) {
-      fullEndpoint = FLUTTER_SERVER.API_PATH + fullEndpoint;
-      console.log(`Añadiendo API_PATH al endpoint: ${fullEndpoint}`);
-    }
-  }
-  
-  const url = new URL(`http://${FLUTTER_SERVER.HOST}:${FLUTTER_SERVER.PORT}${fullEndpoint}`);
-  
-  // Añadir parámetros de consulta si existen
-  Object.keys(queryParams).forEach(key => {
-    url.searchParams.append(key, queryParams[key]);
-  });
-  
-  console.log(`URL construida: ${url.toString()}`);
-  return url.toString();
-}
-
 // Función para extraer el dominio base de una URL (versión global)
 function getBaseDomain(dominio) {
   try {
     if (!dominio) return '';
     
+    // Convertir a minúsculas para normalización
+    let domain = dominio.toLowerCase();
+    
+    // Definir grupos de servicios relacionados
+    const serviciosRelacionados = {
+      'google': ['google', 'gmail', 'youtube', 'drive.google', 'docs.google', 'photos.google', 'meet.google', 'play.google', 'maps.google', 'calendar.google'],
+      'microsoft': ['microsoft', 'outlook', 'live', 'hotmail', 'office365', 'onedrive', 'sharepoint', 'office.com', 'msn', 'skype', 'bing', 'xbox'],
+      'apple': ['apple', 'icloud', 'me.com', 'itunes', 'appleid'],
+      'amazon': ['amazon', 'aws.amazon', 'kindle', 'audible', 'prime'],
+      'meta': ['facebook', 'instagram', 'whatsapp', 'messenger', 'oculus', 'meta'],
+      'adobe': ['adobe', 'creativesuite', 'photoshop.com', 'acrobat.com'],
+      'yahoo': ['yahoo', 'flickr', 'tumblr']
+    };
+    
+    // Verificar si el dominio pertenece a algún grupo de servicios
+    for (const [grupo, servicios] of Object.entries(serviciosRelacionados)) {
+      if (servicios.some(servicio => domain.includes(servicio))) {
+        console.log(`Grupo de servicios detectado: ${dominio} -> ${grupo}`);
+        return grupo;
+      }
+    }
+    
+    // Continuar con el algoritmo normal si no es un servicio conocido
+    
     // Eliminar protocolo
-    let domain = dominio.replace(/^(https?:\/\/)?(www\.)?/i, '');
+    domain = domain.replace(/^(https?:\/\/)?(www\.)?/i, '');
     
     // Eliminar ruta y parámetros
     domain = domain.split('/')[0];
@@ -94,7 +168,7 @@ function getBaseDomain(dominio) {
     const parts = domain.split('.');
     
     // Dominios de segundo nivel específicos
-    const secondLevelDomains = ['co.uk', 'com.br', 'com.mx', 'com.ar', 'com.co'];
+    const secondLevelDomains = ['co.uk', 'com.br', 'com.mx', 'com.ar', 'com.co', 'co.jp', 'co.in', 'co.nz', 'com.au', 'org.uk'];
     
     if (parts.length > 2) {
       const lastTwoParts = parts.slice(-2).join('.');
@@ -122,10 +196,27 @@ function filtrarCredencialesPorDominio(credenciales, dominio) {
     const baseDomain = getBaseDomain(dominio);
     console.log(`Filtrando credenciales para dominio: ${dominio} (base: ${baseDomain})`);
     
+    // Grupos de servicios identificados por su dominio base normalizado
+    const gruposServicios = ['google', 'microsoft', 'apple', 'amazon', 'meta', 'adobe', 'yahoo'];
+    
+    // Verificar si estamos tratando con un grupo de servicios
+    const esGrupoServicios = gruposServicios.includes(baseDomain);
+    
     return credenciales.filter(cred => {
       if (!cred.sitio) return false;
       
       const credDomain = getBaseDomain(cred.sitio);
+      
+      // Si estamos en un grupo de servicios, comparar por grupo
+      if (esGrupoServicios) {
+        const match = credDomain === baseDomain;
+        if (match) {
+          console.log(`Credencial coincidente por grupo de servicios: ${cred.usuario} para ${cred.sitio} (${credDomain})`);
+        }
+        return match;
+      }
+      
+      // Coincidencia normal por dominio base
       const match = credDomain === baseDomain;
       
       if (match) {
@@ -165,26 +256,25 @@ function guardarCredencialesEnCache(dominio, credenciales) {
 // Cargar scripts de Firebase de forma más robusta
 function loadFirebaseScripts() {
   try {
-    // Usar rutas absolutas con chrome.runtime.getURL para evitar problemas de importación
-    const appScriptUrl = chrome.runtime.getURL('firebase/firebase-app-compat.js');
-    const authScriptUrl = chrome.runtime.getURL('firebase/firebase-auth-compat.js');
-    const firestoreScriptUrl = chrome.runtime.getURL('firebase/firebase-firestore-compat.js');
-
-    // Log para depuración
-    console.log('Intentando cargar Firebase desde URLs:');
-    console.log('- App:', appScriptUrl);
-    console.log('- Auth:', authScriptUrl);
-    console.log('- Firestore:', firestoreScriptUrl);
+    console.log('Cargando Firebase en un Service Worker tipo módulo');
     
-    // Usar importScripts con las rutas absolutas
-    importScripts(appScriptUrl);
-    importScripts(authScriptUrl);
-    importScripts(firestoreScriptUrl);
+    // En un módulo ES6 no podemos usar importScripts
+    // En su lugar, podemos verificar si Firebase ya está disponible
+    // o informar que debe importarse correctamente en el archivo como módulo
     
-    console.log('Scripts de Firebase cargados correctamente en background.js');
-    return true;
+    if (typeof firebase !== 'undefined' && firebase.apps && firebase.apps.length > 0) {
+      console.log('Firebase ya está cargado y disponible');
+      return true;
+    }
+    
+    console.log('Firebase no está disponible. En módulos ES6 debes importarlo explícitamente al inicio del archivo');
+    console.log('Añade: import "./firebase/firebase-app-compat.js" y los demás módulos necesarios');
+    
+    // Para módulos ES6, debemos modificar el enfoque de carga
+    // Firebase debería importarse al inicio del archivo usando import
+    return false;
   } catch (e) {
-    console.error('Error al cargar scripts de Firebase en background.js:', e);
+    console.error('Error al intentar cargar Firebase en background.js:', e);
     return false;
   }
 }
@@ -195,24 +285,8 @@ if (!firebaseLoaded) {
   console.error('No se pudieron cargar los scripts de Firebase. Algunas funcionalidades no estarán disponibles.');
 }
 
-// Inicializar Firebase
-try {
-  importScripts('firebase_service.js');
-  
-  let firebaseService = null;
-  try {
-    if (typeof FirebaseService !== 'undefined') {
-      firebaseService = new FirebaseService();
-      console.log('FirebaseService inicializado en background.js');
-    } else {
-      console.error('FirebaseService no está definido, asegúrate de que firebase_service.js se carga antes que background.js');
-    }
-  } catch (e) {
-    console.error('Error al inicializar FirebaseService:', e);
-  }
-} catch (e) {
-  console.error('Error al importar firebase_service.js:', e);
-}
+// Iniciar proceso de inicialización con reintentos
+initializeFirebaseWithRetry();
 
 // Función para guardar credenciales en Firebase
 async function guardarCredencialesEnFirebase(credencial) {
@@ -233,15 +307,7 @@ async function guardarCredencialesEnFirebase(credencial) {
     if (!firebaseReady) {
       console.log('Intentando cargar Firebase...');
       try {
-        // Cargar scripts de Firebase usando rutas absolutas
-        const appScriptUrl = chrome.runtime.getURL('firebase/firebase-app-compat.js');
-        const authScriptUrl = chrome.runtime.getURL('firebase/firebase-auth-compat.js');
-        const firestoreScriptUrl = chrome.runtime.getURL('firebase/firebase-firestore-compat.js');
-        
-        console.log('Cargando scripts de Firebase desde:', appScriptUrl);
-        importScripts(appScriptUrl);
-        importScripts(authScriptUrl);
-        importScripts(firestoreScriptUrl);
+        loadFirebaseScripts();
         
         // Verificar si se cargó correctamente
         if (typeof firebase === 'undefined') {
@@ -249,1169 +315,1272 @@ async function guardarCredencialesEnFirebase(credencial) {
           return { success: false, error: 'No se pudieron cargar los scripts de Firebase' };
         }
         
-        console.log('Scripts de Firebase cargados correctamente');
-        
-        // Inicializar Firebase si es necesario
-        if (!firebase.apps.length) {
-          console.log('Inicializando Firebase...');
-          const firebaseConfig = {
-            apiKey: "AIzaSyDYSZWktCMW2u_pzpYBi_A_ZszwQRyk6ac",
-            authDomain: "passwd-brundindev.firebaseapp.com",
-            projectId: "passwd-brundindev",
-            storageBucket: "passwd-brundindev.firebasestorage.app",
-            messagingSenderId: "252776703139",
-            appId: "1:252776703139:web:60db327548b9f10d564b16"
-          };
-          
-          firebase.initializeApp(firebaseConfig);
-          console.log('Firebase inicializado correctamente');
-        }
-        
         firebaseReady = true;
-      } catch (error) {
-        console.error('Error al cargar o inicializar Firebase:', error);
-        return { success: false, error: 'Error al cargar Firebase: ' + error.message };
+      } catch (loadError) {
+        console.error('Error al cargar scripts de Firebase:', loadError);
+        return { success: false, error: 'Error al cargar Firebase: ' + loadError.message };
       }
     }
     
-    // Verificar si el usuario está autenticado
-    console.log('Verificando autenticación del usuario...');
-    const user = firebase.auth().currentUser;
-    
-    if (!user) {
-      console.error('Error: Usuario no autenticado');
-      return { success: false, error: 'Debes iniciar sesión para guardar credenciales' };
+    // Verificar si tenemos servicio de Firebase
+    if (!firebaseService) {
+      console.log('Servicio de Firebase no inicializado, intentando inicializar');
+      const initialized = await reinitializeFirebaseService();
+      if (!initialized) {
+        console.error('No se pudo inicializar FirebaseService');
+        return { success: false, error: 'Servicio de Firebase no disponible' };
+      }
     }
     
-    console.log('Usuario autenticado:', user.uid, user.email);
+    // Verificar autenticación
+    const isAuthenticated = await firebaseService.isUserAuthenticated();
+    console.log('Estado de autenticación:', isAuthenticated ? 'Autenticado' : 'No autenticado');
     
-    // Crear una referencia a la colección donde guardaremos las credenciales
-    // Siguiendo la estructura /usuarios/{userId}/pass/{documentId}
-    const userId = user.uid;
-    const db = firebase.firestore();
-    
-    // Usar la colección correcta según las reglas de seguridad
-    const passCollection = db.collection('usuarios').doc(userId).collection('pass');
-    
-    console.log('Guardando credencial en Firestore, colección:', `usuarios/${userId}/pass`);
-    
-    // Verificar si ya existe esta credencial
-    const querySnapshot = await passCollection
-      .where('sitio', '==', credencial.sitio)
-      .where('usuario', '==', credencial.usuario)
-      .get();
-    
-    let docRef;
-    
-    if (!querySnapshot.empty) {
-      // Ya existe, actualizar
-      docRef = querySnapshot.docs[0].ref;
-      console.log('Actualizando credencial existente, ID:', docRef.id);
-      
-      await docRef.update({
-        sitio: credencial.sitio,
-        usuario: credencial.usuario,
-        contraseña: credencial.contraseña,
-        actualizado: firebase.firestore.FieldValue.serverTimestamp()
-      });
-      
-      console.log('Credencial actualizada correctamente');
-      return { success: true, updated: true, id: docRef.id };
-    } else {
-      // No existe, crear nueva
-      console.log('Creando nueva credencial');
-      
-      // Añadir timestamps
-      const credencialConTimestamp = {
-        ...credencial,
-        creado: firebase.firestore.FieldValue.serverTimestamp(),
-        actualizado: firebase.firestore.FieldValue.serverTimestamp()
+    if (!isAuthenticated) {
+      console.error('Usuario no autenticado, no se pueden guardar credenciales');
+      return { 
+        success: false, 
+        error: 'Usuario no autenticado', 
+        requiresAuth: true
       };
+    }
+    
+    // Guardar credencial usando la nueva estructura de parámetros
+    console.log('Intentando guardar credencial en Firebase con los datos:', {
+      sitio: credencial.sitio,
+      usuario: credencial.usuario,
+      contraseña: 'presente (oculta)'
+    });
+    
+    try {
+      // Llamar a saveCredential con el objeto de credenciales
+      const credentialData = await firebaseService.saveCredential(credencial);
       
-      const newDocRef = await passCollection.add(credencialConTimestamp);
-      console.log('Credencial creada correctamente, ID:', newDocRef.id);
+      console.log('Credencial guardada exitosamente con ID:', credentialData.id);
       
-      return { success: true, updated: false, id: newDocRef.id };
+      // Si guardamos correctamente, eliminamos de la caché para forzar una recarga
+      const dominio = getBaseDomain(credencial.sitio);
+      console.log(`Invalidando caché para dominio ${dominio} tras guardar nueva credencial`);
+        credencialesCache.delete(dominio);
+      
+      return { 
+        success: true, 
+        message: 'Credencial guardada correctamente',
+        id: credentialData.id
+      };
+    } catch (error) {
+      console.error('Error al guardar credencial en Firebase:', error);
+      
+      // Verificar si es un error de autenticación
+      if (error.message && error.message.includes('no autenticado')) {
+        return { 
+          success: false, 
+          error: 'Usuario no autenticado', 
+          requiresAuth: true
+        };
+      }
+      
+      // Verificar si es un error de permisos
+      if (error.message && error.message.includes('permisos')) {
+        return {
+          success: false,
+          error: 'Error de permisos: No tienes acceso para guardar credenciales',
+          permissionDenied: true
+        };
+      }
+      
+      return { 
+        success: false, 
+        error: error.message || 'Error al guardar credencial'
+      };
     }
   } catch (error) {
-    console.error('Error general al guardar credenciales:', error);
-    
-    // Categorizar los errores para respuestas más útiles
-    let errorMessage = error.message || 'Error desconocido';
-    
-    if (errorMessage.includes('permission-denied') || errorMessage.includes('permission denied')) {
-      errorMessage = 'Error de permisos. Verifica que has iniciado sesión.';
-    } else if (errorMessage.includes('network')) {
-      errorMessage = 'Error de red. Verifica tu conexión a internet.';
-    } else if (errorMessage.includes('quota')) {
-      errorMessage = 'Error de cuota excedida. Intenta más tarde.';
-    }
-    
-    return { success: false, error: errorMessage };
+    console.error('Error general al guardar credenciales en Firebase:', error);
+    return { success: false, error: error.message || 'Error desconocido' };
   }
 }
 
-// Almacenamiento global para credenciales pendientes de guardar
-// Usamos una variable global, NO window.pendingCredentials que causa problemas
-var pendingCredentials = new Map();
-
-// Manejador de mensajes de la extensión
-chrome.runtime.onMessage.addListener(function(mensaje, sender, sendResponse) {
-  console.log('Mensaje recibido en background:', mensaje);
-  console.log('Sender:', sender);
+// Función para reintentar la inicialización de Firebase Service
+async function reinitializeFirebaseService() {
+  console.log('Intentando reinicializar FirebaseService...');
   
-  // Si el mensaje es para verificar si la extensión está activa
-  if (mensaje.action === 'ping') {
-    sendResponse({ status: 'ok', message: 'PASSWD Extension activa' });
+  // Verificar si ya está inicializado
+  if (firebaseService !== null && typeof firebaseService === 'object') {
+    console.log('FirebaseService ya está inicializado');
     return true;
   }
 
-  // Mensaje para obtener credenciales para un sitio
-  if (mensaje.action === 'get_credentials_for_site') {
-    try {
-      const tab = sender.tab;
-      if (!tab || !tab.url) {
-        console.warn('No hay tab o URL válida en la solicitud de credenciales');
-        sendResponse({ error: 'Tab o URL inválida' });
-        return true;
-      }
-
-      const url = new URL(mensaje.url || tab.url);
-      const dominio = url.hostname;
-      
-      console.log(`Solicitando credenciales para: ${dominio}`);
-      
-      // Verificar caché
-      if (credencialesCache.has(dominio)) {
-        const cacheData = credencialesCache.get(dominio);
-        const ahora = Date.now();
-        
-        if (ahora - cacheData.timestamp < 15 * 60 * 1000) {
-          console.log(`Usando credenciales en caché para ${dominio}`);
-          
-          sendResponse({ 
-            credenciales: cacheData.credenciales,
-            fuente: 'cache',
-            timestamp: Date.now()
-          });
-          return true;
-        }
-      }
-      
-      // No hay caché válida, obtener del servidor
-      obtenerCredenciales(dominio)
-        .then(credenciales => {
-          console.log(`Obtenidas ${credenciales.length} credenciales para ${dominio}`);
-          
-          // Guardar en caché y filtrar
-          const credencialesFiltradas = guardarCredencialesEnCache(dominio, credenciales);
-          
-          // Enviar respuesta
-          sendResponse({ 
-            credenciales: credencialesFiltradas,
-            fuente: 'servidor',
-            timestamp: Date.now()
-          });
-        })
-        .catch(error => {
-          console.error('Error al obtener credenciales:', error);
-          sendResponse({ error: 'Error al obtener credenciales del servidor' });
-        });
-      
-      return true; // Indica que la respuesta se enviará asincrónicamente
-    } catch (e) {
-      console.error('Error al procesar solicitud de credenciales:', e);
-      sendResponse({ error: e.message || 'Error desconocido' });
-      return true;
+  // Cargar scripts de Firebase si es necesario
+  let firebaseLoaded = typeof firebase !== 'undefined' && firebase.apps.length > 0;
+  if (!firebaseLoaded) {
+    console.log('Firebase no está cargado, intentando verificar disponibilidad...');
+    firebaseLoaded = loadFirebaseScripts();
+    if (!firebaseLoaded) {
+      console.error('No se pudieron cargar los scripts de Firebase.');
+      return false;
     }
   }
   
-  // Mensaje para rellenar un formulario
-  if (mensaje.action === 'fill_form') {
+  // En un módulo ES6, intentar acceder a la variable global firebaseService
+  try {
+    // Intentar acceder a la variable global definida en firebase_service.js
+    if (typeof self.firebaseService !== 'undefined') {
+      // En service workers, usamos 'self' en lugar de 'window'
+      firebaseService = self.firebaseService;
+      console.log('Obtenida instancia global de FirebaseService desde self.firebaseService');
+        return true;
+    } else if (typeof firebaseService !== 'undefined' && firebaseService !== null) {
+      // La variable global ya está asignada
+      console.log('Variable global firebaseService ya disponible');
+      return true;
+    } else if (typeof FirebaseService !== 'undefined') {
+      // Si la clase está disponible, crear una nueva instancia
+      firebaseService = new FirebaseService();
+      console.log('FirebaseService reinicializado con éxito usando la clase');
+      return true;
+    } else {
+      console.error('No se pudo obtener FirebaseService desde la variable global ni desde la clase');
+      return false;
+    }
+  } catch (e) {
+    console.error('Error al inicializar FirebaseService:', e);
+    return false;
+  }
+}
+
+// Añadir un método para verificar el estado completo de Firebase y la autenticación
+async function diagnosticarEstadoFirebase() {
+  console.log('=== DIAGNÓSTICO FIREBASE SERVICE ===');
+  
+  // 1. Verificar importaciones y disponibilidad
+  console.log(`- Firebase disponible: ${typeof firebase !== 'undefined'}`);
+  if (typeof firebase !== 'undefined') {
+    console.log(`- Firebase apps inicializadas: ${firebase.apps.length}`);
+  }
+  
+  console.log(`- Clase FirebaseService disponible: ${typeof FirebaseService !== 'undefined'}`);
+  console.log(`- Instancia firebaseService: ${firebaseService !== null ? 'Presente' : 'Null'}`);
+  
+  if (firebaseService !== null) {
+    console.log(`- firebaseService.firebaseAvailable: ${firebaseService.firebaseAvailable}`);
+    console.log(`- firebaseService.auth disponible: ${firebaseService.auth !== undefined}`);
+    
     try {
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (tabs.length === 0) {
-          console.warn('No hay tabs activas para rellenar formulario');
-          sendResponse({ error: 'No hay tabs activas' });
+      const user = await firebaseService.getCurrentUser();
+      console.log(`- Usuario actual: ${user ? user.email : 'No autenticado'}`);
+      
+      // Verificar almacenamiento local
+      chrome.storage.local.get('userAuthenticated', (data) => {
+        console.log(`- Estado userAuthenticated en storage: ${data.userAuthenticated ? 'Autenticado' : 'No autenticado'}`);
+      });
+    } catch (e) {
+      console.error('Error al obtener usuario actual:', e);
+    }
+  }
+  
+  console.log('=== FIN DIAGNÓSTICO ===');
+}
+
+// Modificar handleCheckAuthStatus para diagnosticar el problema
+async function handleCheckAuthStatus(sendResponse) {
+  try {
+    console.log('Verificando estado de autenticación...');
+    
+    // Ejecutar diagnóstico
+    await diagnosticarEstadoFirebase();
+    
+    // Verificar si firebaseService está inicializado
+    if (!firebaseService) {
+      console.log('FirebaseService no disponible, intentando reinicializar...');
+      const initialized = await reinitializeFirebaseService();
+      if (!initialized) {
+        console.error('No se pudo inicializar FirebaseService');
+          sendResponse({ 
+          success: false, 
+          error: 'Servicio de Firebase no disponible', 
+          authenticated: false 
+        });
+        return;
+      }
+    }
+    
+    // Intentar login automático si es necesario
+    console.log('Verificando si es necesario reconectar la sesión...');
+    await intentarLoginAutomatico();
+    
+    // Intentar obtener estado de autenticación
+    let isAuthenticated = false;
+    try {
+      isAuthenticated = await firebaseService.isUserAuthenticated();
+      console.log('Estado de autenticación desde Firebase:', isAuthenticated);
+    } catch (authError) {
+      console.error('Error al verificar autenticación:', authError);
+      // Intentar verificar con almacenamiento local
+      chrome.storage.local.get('userAuthenticated', (data) => {
+        console.log('Usando estado de autenticación desde almacenamiento:', data.userAuthenticated);
+        isAuthenticated = data.userAuthenticated === true;
+      });
+    }
+    
+    let user = null;
+    if (isAuthenticated) {
+      try {
+        user = await firebaseService.getCurrentUser();
+        console.log('Usuario obtenido:', user ? user.email : 'ninguno');
+      } catch (userError) {
+        console.error('Error al obtener usuario actual:', userError);
+      }
+    }
+    
+    console.log(`Estado de autenticación final: ${isAuthenticated ? 'Autenticado' : 'No autenticado'}`);
+    
+    // Actualizar estado local
+    chrome.storage.local.set({ userAuthenticated: isAuthenticated });
+    
+    // Actualizar popup
+    if (isAuthenticated) {
+      chrome.action.setPopup({ popup: 'popup.html' });
+    } else {
+      chrome.action.setPopup({ popup: 'login.html' });
+    }
+    
+    sendResponse({ 
+      success: true, 
+      authenticated: isAuthenticated,
+      user: user ? { 
+        email: user.email, 
+        uid: user.uid,
+        displayName: user.displayName
+      } : null
+    });
+    } catch (e) {
+    console.error('Error en handleCheckAuthStatus:', e);
+    sendResponse({ success: false, error: e.message, authenticated: false });
+  }
+}
+
+// Obtener credenciales directamente desde Firebase
+async function obtenerCredenciales(dominio) {
+  console.log(`Obteniendo credenciales para dominio: ${dominio}`);
+  
+  try {
+    // 1. Verificar si hay caché válida
+    if (credencialesCache.has(dominio)) {
+      const cacheEntry = credencialesCache.get(dominio);
+      const ahora = Date.now();
+      
+      // Caché válida por 5 minutos (300000 ms)
+      if (ahora - cacheEntry.timestamp < 300000) {
+        console.log(`Usando credenciales en caché para ${dominio} (${cacheEntry.credenciales.length} encontradas)`);
+        return { 
+          success: true, 
+          mensaje: 'Obtenidas de caché', 
+          credenciales: cacheEntry.credenciales,
+          fromCache: true
+        };
+          } else {
+        console.log(`Caché expirada para ${dominio}, solicitando nuevas credenciales`);
+      }
+    }
+    
+    // 2. Verificar si Firebase está disponible
+    if (!firebaseService) {
+      console.log('Servicio de Firebase no disponible, intentando reinicializar...');
+      const initialized = await reinitializeFirebaseService();
+      if (!initialized) {
+        console.error('Servicio de Firebase no disponible');
+        return { success: false, error: 'Servicio de Firebase no disponible' };
+      }
+    }
+    
+    // 3. Verificar si el usuario está autenticado según Firebase
+    let isAuthenticated = false;
+    try {
+      isAuthenticated = await firebaseService.isUserAuthenticated();
+      console.log('Estado de autenticación según Firebase:', isAuthenticated);
+    } catch (e) {
+      console.error('Error al verificar autenticación en Firebase:', e);
+    }
+
+    // 4. Verificar si el usuario debería estar autenticado según storage
+    const authFromStorage = await new Promise(resolve => {
+      chrome.storage.local.get('userAuthenticated', (data) => {
+        console.log('Estado de autenticación según storage:', data.userAuthenticated);
+        resolve(data.userAuthenticated === true);
+        });
+      });
+      
+    // 5. Si hay discrepancia (debería estar autenticado pero no lo está), intentar reconciliar
+    if (authFromStorage && !isAuthenticated) {
+      console.log('Discrepancia en estado de autenticación, intentando inicio de sesión automático...');
+      
+      // Intentar iniciar sesión automáticamente con credenciales almacenadas
+      const loginExitoso = await intentarLoginAutomatico();
+      
+      if (loginExitoso) {
+        console.log('Inicio de sesión automático exitoso, continuando con la obtención de credenciales');
+        isAuthenticated = true;
+      } else {
+        console.log('No se pudo iniciar sesión automáticamente');
+        
+        // Intentar reconectar una última vez usando el diagnóstico
+        await diagnosticarEstadoFirebase();
+        
+        // Esperar un momento y reinicializar FirebaseService
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        await reinitializeFirebaseService();
+        
+        // Verificar nuevamente autenticación
+        isAuthenticated = await firebaseService.isUserAuthenticated();
+        console.log('Estado de autenticación después de intento final:', isAuthenticated);
+      }
+    }
+    
+    // 6. Si sigue sin estar autenticado, devolver error
+    if (!isAuthenticated) {
+      console.error('Usuario no autenticado, no se pueden obtener credenciales');
+      return { 
+        success: false, 
+        error: 'Usuario no autenticado', 
+        requiresAuth: true,
+        credenciales: []
+      };
+    }
+    
+    // 7. Obtener credenciales de Firebase
+    console.log('Consultando Firebase para obtener credenciales...');
+    const allCredentials = await firebaseService.getAllCredentials();
+    
+    // Verificar que las credenciales tengan contraseñas
+    const credencialesConContraseña = allCredentials.map(cred => {
+      // Si no hay contraseña en el objeto, usar una propiedad alternativa
+      if (!cred.contraseña) {
+        cred.contraseña = cred.password || '';
+        console.log(`Añadiendo contraseña faltante para ${cred.usuario} (${cred.sitio})`);
+      }
+      
+      // Asegurar que tengamos ambas propiedades: contraseña y password
+      return {
+        ...cred,
+        contraseña: cred.contraseña || '',
+        password: cred.contraseña || cred.password || ''
+      };
+    });
+    
+    // Log para debug
+    console.log(`Se encontraron ${allCredentials.length} credenciales en Firebase`);
+    console.log('Muestra de propiedades de credenciales:', allCredentials.slice(0, 3).map(c => ({
+      sitio: c.sitio,
+      usuario: c.usuario,
+      tieneContraseña: !!c.contraseña || !!c.password,
+      propiedades: Object.keys(c)
+    })));
+    
+    // 8. Filtrar por dominio
+    const credencialesFiltradas = filtrarCredencialesPorDominio(credencialesConContraseña, dominio);
+    console.log(`Se encontraron ${credencialesFiltradas.length} credenciales en Firebase para ${dominio}`);
+    
+    // 9. Actualizar caché
+    guardarCredencialesEnCache(dominio, credencialesConContraseña);
+    
+    return {
+      success: true,
+      mensaje: 'Credenciales obtenidas desde Firebase',
+      credenciales: credencialesFiltradas,
+      fromCache: false
+    };
+  } catch (error) {
+    console.error('Error al obtener credenciales:', error);
+    return { success: false, error: error.message, credenciales: [] };
+  }
+}
+
+// Procesar datos de las credenciales para la respuesta
+function processCredentialsData(data) {
+  if (!data || !data.credenciales) {
+    return { credenciales: [] };
+  }
+  
+  try {
+    // Información detallada para diagnóstico
+    console.log('Procesando datos de credenciales recibidos:', 
+      data.credenciales.map(c => ({
+        sitio: c.sitio || c.site || c.url,
+        usuario: c.usuario || c.username || c.email,
+        propiedades: Object.keys(c)
+      }))
+    );
+
+    // Convertir objetos de credenciales a formato esperado por content script
+    const credencialesProcesadas = data.credenciales.map(cred => {
+      // Extraer valores con compatibilidad para distintos nombres de campos
+      const sitio = cred.sitio || cred.site || cred.url || cred.domain || cred.dominio || '';
+      const usuario = cred.usuario || cred.username || cred.email || cred.correo || '';
+      const contraseña = cred.contraseña || cred.password || cred.pass || '';
+      
+      // Asegurarse de que todos los campos necesarios estén presentes
+      return {
+        id: cred.id || `cred_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+        sitio: sitio,
+        site: sitio, // Duplicado para compatibilidad
+        url: sitio, // Duplicado para compatibilidad
+        usuario: usuario,
+        username: usuario, // Para compatibilidad
+        email: usuario, // Para compatibilidad
+        contraseña: contraseña, // Nombre en español
+        password: contraseña, // Nombre en inglés
+        pass: contraseña, // Otro nombre común
+        timestamp: cred.timestamp || Date.now()
+      };
+    });
+    
+    console.log('Credenciales procesadas y normalizadas:', 
+      credencialesProcesadas.map(c => ({
+        sitio: c.sitio,
+        usuario: c.usuario,
+        tieneContraseña: !!c.contraseña,
+        propiedades: Object.keys(c)
+      }))
+    );
+    
+    return { 
+      credenciales: credencialesProcesadas,
+      credentials: credencialesProcesadas, // Duplicado para compatibilidad con ambos nombres
+      success: true
+    };
+        } catch (e) {
+    console.error('Error al procesar datos de credenciales:', e);
+    return { 
+      credenciales: [],
+      credentials: [], 
+      success: false,
+      error: e.message
+    };
+  }
+}
+
+// Enviar credenciales cacheadas al tab especificado
+function enviarCredencialesCacheadas(tab) {
+  if (!tab || !tab.url) {
+    console.warn('No se puede enviar información sin una URL válida del tab');
+    return Promise.resolve({ credenciales: [] });
+  }
+  
+  try {
+    // Obtener el dominio base
+    const url = new URL(tab.url);
+    const dominio = getBaseDomain(url.hostname);
+    
+    // Verificar caché
+    if (credencialesCache.has(dominio)) {
+      const data = credencialesCache.get(dominio);
+      console.log(`Enviando ${data.credenciales.length} credenciales cacheadas para ${dominio}`)
+      
+      return Promise.resolve({
+        credenciales: data.credenciales.map(cred => ({
+          url: cred.sitio,
+          username: cred.usuario,
+          password: cred.password,
+          id: cred.id
+        }))
+      });
+    } else {
+      console.log(`No hay credenciales en caché para ${dominio}`);
+      return Promise.resolve({ credenciales: [] });
+    }
+    } catch (e) {
+    console.error('Error al enviar credenciales cacheadas:', e);
+    return Promise.resolve({ credenciales: [] });
+  }
+}
+
+// Registrar listeners para mensajes
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  try {
+    // Registrar todos los mensajes recibidos para depuración
+    console.log('Mensaje recibido en background:', message.action);
+    
+    // Manejar diferentes tipos de mensajes
+    if (message.action === 'check_auth_status') {
+      handleCheckAuthStatus(sendResponse);
+    }
+    
+    // Nuevo handler para sincronizar estado de autenticación desde el popup/página de login
+    else if (message.action === 'sync_auth_state') {
+      console.log('Sincronizando estado de autenticación:', message.authenticated ? 'Autenticado' : 'No autenticado');
+      
+      if (message.authenticated) {
+        // Actualizar storage con estado de autenticación
+        chrome.storage.local.set({
+          userAuthenticated: true,
+          userEmail: message.email,
+          userId: message.uid,
+          lastAuthTime: Date.now()
+        }, () => {
+          console.log('Estado de autenticación sincronizado en background');
+          
+          // Si hay que guardar contraseña, guardarla en storage local
+          if (message.guardarPassword && message.password) {
+            chrome.storage.local.set({
+              savedEmail: message.email,
+              savedPassword: message.password
+            }, () => {
+              console.log('Credenciales guardadas en storage para auto-login futuro');
+            });
+          }
+          
+          // Intentar verificar con firebaseService que el usuario esté autenticado
+          if (firebaseService && firebaseService.auth) {
+            const currentUser = firebaseService.auth.currentUser;
+            if (!currentUser) {
+              console.log('Firebase auth en background no tiene usuario, intentando re-autenticar...');
+              // No intentamos auto-login aquí para evitar loops, solo reportamos el estado
+            } else {
+              console.log('Usuario también autenticado en firebaseService del background:', currentUser.email);
+            }
+          }
+          
+          sendResponse({ success: true, message: 'Estado sincronizado correctamente' });
+              });
+            } else {
+        // Limpiar estado de autenticación
+        chrome.storage.local.set({
+          userAuthenticated: false,
+          userEmail: null,
+          userId: null,
+          lastAuthTime: null
+        }, () => {
+          console.log('Estado de no-autenticación sincronizado en background');
+          sendResponse({ success: true, message: 'Estado de cierre de sesión sincronizado' });
+        });
+      }
+      
+      return true; // Mantener el canal abierto para sendResponse asíncrono
+    }
+    
+    // Notificación de cambio de popup predeterminado
+    else if (message.action === 'popup_changed') {
+      console.log('Recibida notificación de cambio de popup predeterminado');
+            sendResponse({ success: true });
+      return false;
+    }
+    
+    // Respuesta asíncrona
+    let asyncResponseRequired = false;
+    
+    // Procesar solicitud según acción
+    switch (message.action) {
+      case 'content_script_ready':
+        handleContentScriptReady(sender.tab, sendResponse);
+        asyncResponseRequired = true;
+        break;
+        
+      case 'get_credentials_for_site':
+        handleGetCredentials(message, sender.tab, sendResponse);
+        asyncResponseRequired = true;
+        break;
+        
+      case 'fill_form_response':
+        handleFormFillResponse(message, sender.tab, sendResponse);
+        break;
+        
+      case 'guardar_credenciales':
+        handleSaveCredentials(message, sender.tab, sendResponse);
+        asyncResponseRequired = true;
+        break;
+        
+      case 'login_with_credentials':
+        handleLoginWithCredentials(message, sendResponse);
+        asyncResponseRequired = true;
+        break;
+        
+      case 'register_user':
+        handleRegisterUser(message, sendResponse);
+        asyncResponseRequired = true;
+        break;
+        
+      case 'logout_user':
+        handleLogoutUser(sendResponse);
+        asyncResponseRequired = true;
+        break;
+        
+      case 'show_login_popup':
+        handleShowLoginPopup(message, sender.tab, sendResponse);
+        asyncResponseRequired = true;
+        break;
+        
+      case 'show_save_notification':
+        handleShowSaveNotification(message, sender.tab, sendResponse);
+        asyncResponseRequired = true;
+        break;
+      
+      case 'log_message':
+        // Simple handler for log messages from content scripts
+        console.log(`[Content Log][${sender.tab?.id}]: ${message.text || '(No message)'}`);
+        if (message.level === 'error') {
+          console.error(`[Content Error][${sender.tab?.id}]: ${message.text || '(No message)'}`);
+        }
+        sendResponse({ success: true });
+        break;
+        
+      default:
+        console.warn(`Acción desconocida: ${message.action}`);
+        sendResponse({ success: false, error: 'Acción no soportada' });
+    }
+    
+    // Debemos retornar true para indicar que la respuesta se enviará asincrónicamente
+    return asyncResponseRequired;
+  } catch (error) {
+    console.error('Error al procesar mensaje en background:', error);
+    sendResponse({ success: false, error: error.message });
+    return false;
+  }
+});
+
+// Handler para cuando el content script notifica que está listo
+async function handleContentScriptReady(tab, sendResponse) {
+  try {
+    if (!tab || !tab.id) {
+      console.error('Tab no válido en handleContentScriptReady');
+      sendResponse({ success: false, error: 'Tab no válido' });
+      return;
+    }
+    
+    console.log(`Content script listo en tab ${tab.id}: ${tab.url}`);
+    contentScriptsReady.set(tab.id, { ready: true, url: tab.url, timestamp: Date.now() });
+    
+    // Precargar credenciales para este dominio
+    const credenciales = await precargarCredencialesParaTab(tab);
+    
+          sendResponse({ 
+      success: true, 
+      message: 'Background listo para procesar solicitudes',
+      credenciales: credenciales
+          });
+    } catch (e) {
+    console.error('Error en handleContentScriptReady:', e);
+      sendResponse({ success: false, error: e.message });
+  }
+}
+
+// Handler para obtener credenciales
+async function handleGetCredentials(message, tab, sendResponse) {
+  try {
+    if (!tab || !tab.url) {
+      console.error('Tab no válido en handleGetCredentials');
+      sendResponse({ success: false, error: 'Tab no válido', credenciales: [], credentials: [] });
+      return;
+    }
+    
+    const url = message.url || tab.url;
+    console.log(`Solicitando credenciales para: ${url}`);
+    const dominio = getBaseDomain(new URL(url).hostname);
+    console.log(`Dominio base para búsqueda: ${dominio}`);
+    
+    // Verificar y reparar el estado de autenticación antes de obtener credenciales
+    console.log('Verificando estado de autenticación antes de obtener credenciales...');
+    const estadoAutenticacion = await checkAndRepairAuthState();
+    
+    if (!estadoAutenticacion) {
+      console.log('Usuario no autenticado después de intentar reparar, solicitando login manual');
+      // Enviar mensaje al content script para mostrar mensaje de login
+      if (tab.id) {
+        try {
+          chrome.tabs.sendMessage(tab.id, { 
+            action: 'mostrar_login_requerido',
+            mensaje: 'Es necesario iniciar sesión para ver las credenciales'
+          });
+        } catch (e) {
+          console.error('Error al enviar mensaje de login requerido:', e);
+        }
+      }
+      
+      sendResponse({ 
+        success: false, 
+        error: 'Requiere autenticación', 
+        credenciales: [], 
+        credentials: []
+      });
+      return;
+    }
+    
+    // Obtener credenciales de Firebase
+    const result = await obtenerCredenciales(dominio);
+    
+    if (result.success) {
+      // Procesar datos para asegurar formato correcto
+      const processedData = processCredentialsData(result);
+      
+      // Verificar que las credenciales tengan contraseñas
+      const tienenContraseñas = processedData.credenciales.some(c => 
+        !!c.contraseña || !!c.password || !!c.pass
+      );
+      
+      if (!tienenContraseñas && processedData.credenciales.length > 0) {
+        console.warn('⚠️ ADVERTENCIA: Las credenciales no tienen contraseñas');
+        // Información de depuración
+        console.log('Credenciales sin procesar:', 
+          result.credenciales.map(c => ({
+            sitio: c.sitio, 
+            usuario: c.usuario, 
+            props: Object.keys(c)
+          }))
+        );
+      }
+      
+      // Información detallada para diagnóstico sobre lo que se está devolviendo
+      console.log(`Enviando ${processedData.credenciales.length} credenciales al solicitante con el siguiente formato:`, 
+        processedData.credenciales.length > 0 ? 
+          {
+            ejemplo: processedData.credenciales[0],
+            campos: Object.keys(processedData.credenciales[0])
+          } : 'No hay credenciales'
+      );
+      
+      // Asegurar que las credenciales estén disponibles bajo ambos nombres para compatibilidad
+      processedData.credentials = processedData.credenciales;
+      processedData.success = true;
+      
+      sendResponse(processedData);
+    } else {
+      console.error('Error al obtener credenciales:', result.error);
+      sendResponse({ 
+        success: false, 
+        error: result.error, 
+        credenciales: [], 
+        credentials: []
+      });
+    }
+  } catch (e) {
+    console.error('Error en handleGetCredentials:', e);
+    sendResponse({ 
+      success: false, 
+      error: e.message, 
+      credenciales: [], 
+      credentials: []
+    });
+  }
+}
+
+// Handler para guardar credenciales
+async function handleSaveCredentials(message, tab, sendResponse) {
+  try {
+    console.log('Procesando solicitud de guardar credenciales', message);
+    
+    // Verificar si tenemos todos los datos necesarios
+    if (!message.credencial || !message.credencial.sitio || !message.credencial.usuario || !message.credencial.contraseña) {
+      console.error('Error: Datos incompletos para guardar credenciales', message);
+      sendResponse({ success: false, error: 'Datos incompletos' });
+      return;
+    }
+    
+    // Guardar credenciales en Firebase
+    const resultado = await guardarCredencialesEnFirebase(message.credencial);
+    
+    if (resultado.success) {
+      console.log('Credenciales guardadas correctamente en Firebase');
+      
+      // Actualizar la caché local para este dominio
+      await precargarCredencialesParaTab(tab);
+      
+      sendResponse({ success: true, message: 'Credenciales guardadas correctamente' });
+          } else {
+      console.error('Error al guardar credenciales:', resultado.error);
+      
+      // Si es un error de autenticación, intentar mostrar el popup de login
+      if (resultado.error.includes('autenticación') || resultado.error.includes('autenticado')) {
+        chrome.tabs.sendMessage(tab.id, { action: 'mostrar_login_error', error: resultado.error });
+      }
+      
+      sendResponse({ success: false, error: resultado.error });
+    }
+  } catch (error) {
+    console.error('Error inesperado al guardar credenciales:', error);
+    sendResponse({ success: false, error: 'Error interno al guardar credenciales' });
+  }
+}
+
+// Handler para respuesta de llenado de formulario
+function handleFormFillResponse(message, tab, sendResponse) {
+  try {
+    const { requestId, success, error } = message;
+    
+    if (requestId && formFillResponses.has(requestId)) {
+      const callback = formFillResponses.get(requestId);
+      formFillResponses.delete(requestId);
+      
+      if (success) {
+        console.log(`Formulario llenado correctamente (${requestId})`);
+        callback({ success: true });
+    } else {
+        console.error(`Error al llenar formulario (${requestId}): ${error}`);
+        callback({ success: false, error });
+      }
+    } else {
+      console.warn(`Recibida respuesta para solicitud desconocida: ${requestId}`);
+    }
+    
+    sendResponse({ success: true });
+  } catch (e) {
+    console.error('Error en handleFormFillResponse:', e);
+    sendResponse({ success: false, error: e.message });
+  }
+}
+
+// Handler para iniciar sesión con credenciales
+async function handleLoginWithCredentials(message, sendResponse) {
+  try {
+    if (!message.email || !message.password) {
+      console.error('Faltan credenciales para iniciar sesión');
+      sendResponse({ success: false, error: 'Datos incompletos' });
+      return;
+    }
+
+    console.log(`Iniciando sesión con email: ${message.email}`);
+    
+    // Iniciar sesión en Firebase
+    const result = await firebaseService.login(message.email, message.password);
+    
+    if (result.success) {
+      console.log('Sesión iniciada correctamente');
+      
+      // Determinar si se debe guardar la contraseña
+      const guardarPassword = message.guardarPassword !== undefined ? message.guardarPassword : true;
+      console.log(`¿Guardar contraseña para login automático? ${guardarPassword ? 'Sí' : 'No'}`);
+      
+      // Guardar estado de autenticación y email siempre, contraseña solo si se solicita
+      if (guardarPassword) {
+        // Guardar todo incluyendo la contraseña para login automático 
+        chrome.storage.local.set({ 
+          userAuthenticated: true, 
+          userEmail: message.email,
+          userPassword: message.password
+        });
+        console.log('Credenciales completas guardadas para login automático');
+      } else {
+        // Guardar solo el estado de autenticación y el email
+        chrome.storage.local.set({ 
+          userAuthenticated: true, 
+          userEmail: message.email,
+          userPassword: null // No guardar contraseña
+        });
+        console.log('Contraseña no guardada para login automático');
+      }
+      
+      // Cambiar popup
+      chrome.action.setPopup({ popup: 'popup.html' });
+      
+      // Verificar si hay credenciales pendientes por guardar
+      chrome.storage.local.get('pendingCredentials', async (data) => {
+        if (data.pendingCredentials) {
+          console.log('Intentando guardar credenciales pendientes...');
+          
+          // Guardar credenciales pendientes
+          await guardarCredencialesEnFirebase(data.pendingCredentials);
+          
+          // Eliminar credenciales pendientes
+          chrome.storage.local.remove('pendingCredentials');
+        }
+      });
+      
+      sendResponse({ success: true, user: result.user });
+    } else {
+      console.error('Error al iniciar sesión:', result.error);
+      sendResponse({ success: false, error: result.error });
+    }
+  } catch (e) {
+    console.error('Error en handleLoginWithCredentials:', e);
+    sendResponse({ success: false, error: e.message });
+  }
+}
+
+// Handler para registrar usuario
+async function handleRegisterUser(message, sendResponse) {
+  try {
+    if (!message.email || !message.password) {
+      console.error('Faltan datos para registrar usuario');
+      sendResponse({ success: false, error: 'Datos incompletos' });
           return;
         }
         
-        const activeTab = tabs[0];
-        chrome.tabs.sendMessage(activeTab.id, {
-          accion: 'fill_form',
-          credencial: mensaje.credencial
-        }, (response) => {
-          if (chrome.runtime.lastError) {
-            console.error('Error al enviar mensaje a content script:', chrome.runtime.lastError);
-            sendResponse({ error: chrome.runtime.lastError.message });
-          } else {
-            sendResponse(response);
-          }
-        });
-      });
-      
-      return true; // Indicar que la respuesta se enviará de forma asíncrona
-    } catch (e) {
-      console.error('Error al procesar fill_form:', e);
-      sendResponse({ error: e.message });
-      return true;
-    }
-  }
-
-  // Notificación de que el content script está listo
-  if (mensaje.action === 'content_script_ready') {
-    try {
-      const tab = sender.tab;
-      if (!tab) {
-        console.warn('Mensaje content_script_ready sin tab válida');
-        return;
-      }
-      
-      console.log(`Content script listo en tab ${tab.id}: ${tab.url}`);
-      
-      // Enviamos las credenciales para esta página
-      setTimeout(() => {
-        try {
-          enviarCredencialesCacheadas(tab);
-        } catch (e) {
-          console.error('Error al enviar credenciales después de ready:', e);
-        }
-      }, 500);
-      
-      sendResponse({ status: 'ok' });
-    } catch (e) {
-      console.error('Error al procesar content_script_ready:', e);
-      sendResponse({ error: e.message });
-    }
-    return true;
-  }
-  
-  // Añadir un manejador para compartir credenciales desde el popup
-  if (mensaje.action === 'share_credentials_from_popup') {
-    try {
-      if (!mensaje.credenciales || !mensaje.dominio) {
-        console.warn('Datos incompletos en share_credentials_from_popup');
-        sendResponse({ error: 'Datos incompletos' });
-        return true;
-      }
-      
-      const dominio = mensaje.dominio;
-      const credenciales = mensaje.credenciales;
-      
-      console.log(`Recibiendo ${credenciales.length} credenciales desde popup para ${dominio}`);
-      
-      // Guardar en caché sin filtrar (ya vienen filtradas del popup)
-      credencialesCache.set(dominio, {
-        credenciales: credenciales,
-        timestamp: Date.now()
-      });
-      
-      console.log(`Guardadas ${credenciales.length} credenciales en caché para ${dominio}`);
-      
-      // Enviar a la pestaña actual si existe
-      if (mensaje.tabId) {
-        console.log(`Enviando credenciales a tab ${mensaje.tabId}`);
-        
-        // Verificar primero si el content script está listo
-        chrome.tabs.sendMessage(mensaje.tabId, { accion: 'check_ready' })
-          .then(response => {
-            if (response && response.ready) {
-              // Content script está listo, enviar credenciales
-              return chrome.tabs.sendMessage(mensaje.tabId, {
-                accion: 'set_credentials',
-                credenciales: credenciales
-              });
-            } else {
-              throw new Error('Content script no está listo');
-            }
-          })
-          .then(() => {
-            console.log('Credenciales compartidas con éxito al content script');
-            sendResponse({ success: true });
-          })
-          .catch(e => {
-            console.error('Error al comunicar con content script, inyectando script...', e);
-            
-            // Intentar inyectar el content script
-      chrome.scripting.executeScript({
-              target: { tabId: mensaje.tabId },
-              files: ['content.js']
-            })
-            .then(() => {
-              console.log('Content script inyectado, esperando 1 segundo antes de enviar credenciales');
-              
-              // Esperar a que el script se inicialice
-              setTimeout(() => {
-                chrome.tabs.sendMessage(mensaje.tabId, {
-                  accion: 'set_credentials',
-                  credenciales: credenciales
-                })
-                .then(() => {
-                  console.log('Credenciales enviadas después de inyección');
-                  sendResponse({ success: true, injected: true });
-                })
-                .catch(err => {
-                  console.error('Error al enviar credenciales después de inyección:', err);
-                  sendResponse({ error: 'Error al enviar credenciales después de inyección' });
-                });
-              }, 1000);
-            })
-            .catch(err => {
-              console.error('Error al inyectar content script:', err);
-              sendResponse({ error: 'No se pudo inyectar el content script' });
-            });
-          });
-        
-        return true; // Indicar que la respuesta será asíncrona
-      }
-      
-      sendResponse({ success: true, cached: true });
-    } catch (e) {
-      console.error('Error al procesar share_credentials_from_popup:', e);
-      sendResponse({ error: e.message });
-    }
-    return true;
-  }
-  
-  // Manejador para guardar nuevas credenciales capturadas del formulario
-  if (mensaje.accion === 'guardar_credenciales') {
-    try {
-      if (!mensaje.credencial) {
-        console.warn('Datos incompletos en guardar_credenciales');
-        sendResponse({ success: false, error: 'No se proporcionaron credenciales' });
-        return true;
-      }
-      
-      const credencial = mensaje.credencial;
-      console.log('Procesando solicitud para guardar nuevas credenciales:', credencial.sitio);
-      
-      // Log adicional para depuración
-      console.log('Detalles de credencial a guardar:', {
-        sitio: credencial.sitio,
-        usuario: credencial.usuario,
-        contraseña: credencial.contraseña ? '******' : 'vacía',
-        estructura: JSON.stringify(credencial)
-      });
-      
-      // Realizar la petición para guardar las credenciales directamente
-      guardarCredencialesEnFirebase(credencial)
-        .then(resultado => {
-          console.log('Resultado de guardar credenciales:', resultado);
-          
-          // Si hay error de autenticación, intentar mostrar popup de login
-          if (!resultado.success && resultado.error && 
-              (resultado.error.includes('autenticado') || resultado.error.includes('iniciar sesión'))) {
-            console.log('Error de autenticación, intentando mostrar popup de login');
-            try {
-              // Cambiar el popup activo al de login
-              chrome.action.setPopup({ popup: 'login.html' }, () => {
-                if (chrome.runtime.lastError) {
-                  console.error('Error al cambiar popup:', chrome.runtime.lastError);
-                } else {
-                  console.log('Popup cambiado a login.html');
-                  // Intentar abrir el popup
-                  try {
-                    chrome.action.openPopup();
-                  } catch (popupErr) {
-                    console.warn('No se pudo abrir el popup automáticamente');
-                  }
-                }
-              });
-            } catch (popupErr) {
-              console.error('Error al intentar mostrar popup de login:', popupErr);
-            }
-          }
-          
-          sendResponse(resultado);
-        })
-        .catch(error => {
-          console.error('Error al guardar credenciales en Firebase:', error);
-          sendResponse({ success: false, error: error.message || 'Error desconocido al guardar' });
-        });
-      
-      return true; // Indicar que sendResponse se llamará de forma asíncrona
-    } catch (e) {
-      console.error('Error al procesar guardar_credenciales:', e);
-      sendResponse({ success: false, error: e.message });
-      return true;
-    }
-  }
-  
-  // Manejador para mostrar el popup de login cuando se solicita
-  if (mensaje.action === 'show_login_popup') {
-    try {
-      console.log('Solicitando cambio a popup de login');
-      
-      // Cambiar el popup activo al de login
-      chrome.action.setPopup({ popup: 'login.html' }, () => {
-        if (chrome.runtime.lastError) {
-          console.error('Error al cambiar popup:', chrome.runtime.lastError);
-          sendResponse({ success: false, error: chrome.runtime.lastError.message });
-        } else {
-          console.log('Popup cambiado a login.html');
-          sendResponse({ success: true });
-          
-          // Intentar abrir el popup para que el usuario inicie sesión
-          try {
-            chrome.action.openPopup();
-          } catch (e) {
-            console.log('No se pudo abrir el popup automáticamente, el usuario deberá hacerlo manualmente');
-          }
-        }
-      });
-      
-      return true; // Indicar que la respuesta se enviará de forma asíncrona
-    } catch (e) {
-      console.error('Error al procesar solicitud de login popup:', e);
-      sendResponse({ success: false, error: e.message });
-      return true;
-    }
-  }
-  
-  // Manejador para mostrar notificación de guardado
-  if (mensaje.action === 'show_save_notification') {
-    try {
-      if (!mensaje.data || !mensaje.data.sitio || !mensaje.data.usuario) {
-        console.warn('Datos incompletos para notificación');
-        sendResponse({ success: false, error: 'Datos incompletos' });
-        return true;
-      }
-      
-      console.log('Mostrando notificación del sistema para guardar credenciales');
-      console.log('Datos de la notificación:', mensaje.data);
-      
-      // Usar la variable global pendingCredentials directamente, no window.pendingCredentials
-      console.log('Estado actual de pendingCredentials:', pendingCredentials ? 
-               `Map con ${pendingCredentials.size} elementos` : 
-               'No definido');
-      
-      // Crear un ID único para esta notificación
-      const notificationId = `passwd_save_${Date.now()}`;
-      
-      // Mostrar notificación
-      chrome.notifications.create(notificationId, {
-        type: 'basic',
-        iconUrl: chrome.runtime.getURL('icons/logo_passwd.JPEG'),
-        title: 'PASSWD - Guardar Credenciales',
-        message: `¿Deseas guardar la contraseña para ${mensaje.data.usuario} en ${mensaje.data.sitio}?`,
-        buttons: [
-          { title: 'Guardar' },
-          { title: 'Cancelar' }
-        ],
-        priority: 2,
-        requireInteraction: true // Mantener la notificación hasta que el usuario interactúe
-      }, (notificationIdCreated) => {
-        if (chrome.runtime.lastError) {
-          console.error('Error al crear notificación:', chrome.runtime.lastError);
-          sendResponse({ success: false, error: chrome.runtime.lastError.message });
-        } else {
-          console.log('Notificación mostrada con ID:', notificationIdCreated);
-          sendResponse({ success: true, notificationId: notificationIdCreated });
-        }
-      });
-      
-      return true; // Indicar que se enviará respuesta asíncrona
-    } catch (e) {
-      console.error('Error al mostrar notificación:', e);
-      sendResponse({ success: false, error: e.message });
-      return true;
-    }
-  }
-  
-  // Mensaje para preparar credenciales para guardar
-  if (mensaje.action === 'prepare_credentials') {
-    try {
-      if (!mensaje.credencial || !mensaje.credencial.sitio || !mensaje.credencial.usuario || !mensaje.credencial.contraseña) {
-        console.warn('Credenciales incompletas para preparar guardado');
-        sendResponse({ success: false, error: 'Credenciales incompletas' });
-        return true;
-      }
-      
-      console.log('Mensaje prepare_credentials recibido:', mensaje.credencial);
-      
-      // Generar un ID basado en el sitio y usuario
-      const credentialId = `${mensaje.credencial.sitio}_${mensaje.credencial.usuario}`;
-      
-      // Guardar las credenciales temporalmente usando nuestra variable global
-      pendingCredentials.set(credentialId, {
-        credencial: mensaje.credencial,
-        timestamp: Date.now()
-      });
-      
-      console.log('Credenciales preparadas para guardar con ID:', credentialId);
-      console.log('Estado de pendingCredentials:', 
-                 `Map con ${pendingCredentials.size} elementos`);
-      
-      // Configurar un timer para limpiar las credenciales después de 5 minutos
-      setTimeout(() => {
-        if (pendingCredentials.has(credentialId)) {
-          console.log('Limpiando credenciales preparadas (timeout) para:', credentialId);
-          pendingCredentials.delete(credentialId);
-        }
-      }, 5 * 60 * 1000);
-      
-      sendResponse({ success: true, id: credentialId });
-    } catch (e) {
-      console.error('Error al preparar credenciales:', e);
-      sendResponse({ success: false, error: e.message });
-    }
+    console.log(`Registrando usuario con email: ${message.email}`);
     
-    return true;
-  }
-  
-  // Añadir handler para cerrar sesión
-  if (mensaje.action === 'logout_user') {
-    try {
-      console.log('Procesando solicitud de cierre de sesión');
-      
-      // Verificar si Firebase está disponible
-      if (typeof firebase === 'undefined' || !firebase.apps.length) {
-        // Intentar cargar Firebase
-        try {
-          // Cargar scripts de Firebase usando rutas absolutas
-          const appScriptUrl = chrome.runtime.getURL('firebase/firebase-app-compat.js');
-          const authScriptUrl = chrome.runtime.getURL('firebase/firebase-auth-compat.js');
-          
-          importScripts(appScriptUrl);
-          importScripts(authScriptUrl);
-          
-          // Verificar si se cargó correctamente
-          if (typeof firebase === 'undefined') {
-            console.error('No se pudo cargar Firebase para cerrar sesión');
-            sendResponse({ success: false, error: 'No se pudo cargar Firebase' });
-            return true;
-          }
-          
-          // Inicializar Firebase si es necesario
-          if (!firebase.apps.length) {
-            const firebaseConfig = {
-              apiKey: "AIzaSyDYSZWktCMW2u_pzpYBi_A_ZszwQRyk6ac",
-              authDomain: "passwd-brundindev.firebaseapp.com",
-              projectId: "passwd-brundindev",
-              storageBucket: "passwd-brundindev.firebasestorage.app",
-              messagingSenderId: "252776703139",
-              appId: "1:252776703139:web:60db327548b9f10d564b16"
-            };
-            
-            firebase.initializeApp(firebaseConfig);
-          }
-        } catch (error) {
-          console.error('Error al cargar Firebase para cerrar sesión:', error);
-          sendResponse({ success: false, error: error.message });
-          return true;
-        }
-      }
-      
-      // Intentar usar firebaseService si está disponible
-      if (typeof firebaseService !== 'undefined') {
-        console.log('Usando firebaseService para cerrar sesión');
-        firebaseService.logout()
-          .then(result => {
-            console.log('Resultado de cierre de sesión:', result);
-            
-            if (result.success) {
-              // Actualizar storage
-              chrome.storage.local.set({ 'userAuthenticated': false }, () => {
-                // Cambiar popup
-                chrome.action.setPopup({ popup: 'login.html' });
-                sendResponse({ success: true });
-              });
-            } else {
-              sendResponse({ success: false, error: result.error });
-            }
-          })
-          .catch(error => {
-            console.error('Error al cerrar sesión con firebaseService:', error);
-            sendResponse({ success: false, error: error.message });
-          });
-      } else {
-        // Usar Firebase directamente
-        console.log('Usando Firebase auth directamente para cerrar sesión');
-        firebase.auth().signOut()
-          .then(() => {
-            console.log('Sesión cerrada correctamente');
-            
-            // Actualizar storage
-            chrome.storage.local.set({ 'userAuthenticated': false }, () => {
-              // Cambiar popup
-              chrome.action.setPopup({ popup: 'login.html' });
-              sendResponse({ success: true });
-            });
-          })
-          .catch(error => {
-            console.error('Error al cerrar sesión:', error);
-            sendResponse({ success: false, error: error.message });
-          });
-      }
-      
-      return true; // Indicar que se enviará respuesta asíncrona
-    } catch (error) {
-      console.error('Error general al procesar cierre de sesión:', error);
-      sendResponse({ success: false, error: error.message });
-      return true;
-    }
-  }
-  
-  // Si llegamos aquí, no se procesó el mensaje
-  sendResponse({ error: 'Mensaje no reconocido' });
-  return true;
-});
-
-// Escuchar clics en notificaciones
-chrome.notifications.onButtonClicked.addListener((notificationId, buttonIndex) => {
-  console.log(`Clic en botón ${buttonIndex} de notificación ${notificationId}`);
-  
-  // Verificar que es una notificación de PASSWD
-  if (notificationId.startsWith('passwd_save_')) {
-    console.log(`Estado de pendingCredentials: Map con ${pendingCredentials.size} elementos`);
+    // Registrar usuario en Firebase
+    const result = await firebaseService.registerUser(message.email, message.password);
     
-    if (buttonIndex === 0) {
-      // Botón Guardar (primer botón)
-      console.log('Usuario eligió guardar credenciales');
+    if (result.success) {
+      console.log('Usuario registrado correctamente');
       
-      // Buscar las credenciales guardadas temporalmente
-      const credentials = Array.from(pendingCredentials.values())
-        .sort((a, b) => b.timestamp - a.timestamp) // Ordenar por timestamp, más reciente primero
-        .map(entry => entry.credencial);
+      // Guardar estado de autenticación y credenciales para login automático posterior
+      chrome.storage.local.set({ 
+        userAuthenticated: true,
+        userEmail: message.email,
+        userPassword: message.password // Almacenamos contraseña para permitir login automático
+      });
       
-      console.log(`Se encontraron ${credentials.length} credenciales pendientes`);
+      // Cambiar popup
+      chrome.action.setPopup({ popup: 'popup.html' });
       
-      if (credentials.length > 0) {
-        // Tomar la credencial más reciente
-        const credencial = credentials[0];
-        console.log('Guardando credencial para:', credencial.sitio);
-        
-        // Guardar la credencial
-        guardarCredencialesEnFirebase(credencial)
-          .then(resultado => {
-            console.log('Resultado de guardar credenciales:', resultado);
-            
-            // Mostrar notificación de resultado
-            chrome.notifications.create({
-              type: 'basic',
-              iconUrl: chrome.runtime.getURL('icons/logo_passwd.JPEG'),
-              title: 'PASSWD - Resultado',
-              message: resultado.success ? 
-                'Credenciales guardadas correctamente.' : 
-                `Error al guardar: ${resultado.error || 'Desconocido'}`,
-              priority: 1
-            });
-            
-            // Limpiar todas las credenciales pendientes
-            pendingCredentials.clear();
-          })
-          .catch(error => {
-            console.error('Error al guardar credenciales:', error);
-            
-            // Mostrar error
-            chrome.notifications.create({
-              type: 'basic',
-              iconUrl: chrome.runtime.getURL('icons/logo_passwd.JPEG'),
-              title: 'PASSWD - Error',
-              message: `Error al guardar: ${error.message || 'Desconocido'}`,
-              priority: 1
-            });
-          });
-      } else {
-        console.error('No se encontraron credenciales pendientes');
-        
-        chrome.notifications.create({
-          type: 'basic',
-          iconUrl: chrome.runtime.getURL('icons/logo_passwd.JPEG'),
-          title: 'PASSWD - Error',
-          message: 'No se encontraron credenciales para guardar.',
-          priority: 1
-        });
-      }
+      sendResponse({ success: true, user: result.user });
     } else {
-      // Botón Cancelar (segundo botón)
-      console.log('Usuario eligió cancelar guardado de credenciales');
+      console.error('Error al registrar usuario:', result.error);
+      sendResponse({ success: false, error: result.error });
+    }
+  } catch (e) {
+    console.error('Error en handleRegisterUser:', e);
+    sendResponse({ success: false, error: e.message });
+  }
+}
+
+// Handler para cerrar sesión
+async function handleLogoutUser(sendResponse) {
+  try {
+    console.log('Cerrando sesión...');
+    
+    // Cerrar sesión en Firebase
+    const result = await firebaseService.logout();
+    
+    if (result.success) {
+      console.log('Sesión cerrada correctamente');
       
-      // Limpiar las credenciales pendientes
-      pendingCredentials.clear();
+      // Actualizar estado de autenticación y eliminar credenciales almacenadas
+      chrome.storage.local.set({ 
+        userAuthenticated: false,
+        userEmail: null,
+        userPassword: null
+      });
       
-      // Informar al usuario
-      chrome.notifications.create({
-        type: 'basic',
-        iconUrl: chrome.runtime.getURL('icons/logo_passwd.JPEG'),
-        title: 'PASSWD - Cancelado',
-        message: 'Guardado de credenciales cancelado.',
-        priority: 1
+      // Cambiar popup
+      chrome.action.setPopup({ popup: 'login.html' });
+      
+      // Limpiar caché
+      credencialesCache.clear();
+      
+      sendResponse({ success: true });
+    } else {
+      console.error('Error al cerrar sesión:', result.error);
+      sendResponse({ success: false, error: result.error });
+    }
+  } catch (e) {
+    console.error('Error en handleLogoutUser:', e);
+    sendResponse({ success: false, error: e.message });
+  }
+}
+
+// Handler para mostrar popup de login
+async function handleShowLoginPopup(message, tab, sendResponse) {
+  try {
+    console.log('Mostrando popup de login...');
+    
+    // Cambiar popup
+    chrome.action.setPopup({ popup: 'login.html' });
+    
+    // Abrir popup
+    chrome.action.openPopup();
+    
+    sendResponse({ success: true });
+  } catch (e) {
+    console.error('Error en handleShowLoginPopup:', e);
+    sendResponse({ success: false, error: e.message });
+  }
+}
+
+// Handler para mostrar notificación de guardar
+function handleShowSaveNotification(message, tab, sendResponse) {
+  try {
+    if (!message.sitio || !message.usuario || !message.contraseña) {
+      console.error('Faltan datos para mostrar notificación de guardar');
+      sendResponse({ success: false, error: 'Datos incompletos' });
+      return;
+    }
+
+    console.log(`Mostrando notificación para guardar: ${message.sitio} (Usuario: ${message.usuario})`);
+    
+    // Generar ID único para la notificación
+    const notificationId = `save_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    
+    // Guardar credenciales pendientes
+    pendingNotificationsCredentials.set(notificationId, {
+      sitio: message.sitio,
+      usuario: message.usuario,
+      contraseña: message.contraseña,
+      timestamp: Date.now()
+    });
+    
+    // Crear notificación
+    chrome.notifications.create(notificationId, {
+      type: 'basic',
+      iconUrl: chrome.runtime.getURL('icons/logo_passwd.JPEG'),
+      title: 'PASSWD - Guardar credenciales',
+      message: `¿Quieres guardar tus credenciales para ${getBaseDomain(message.sitio)}?`,
+      buttons: [
+        { title: 'Guardar' },
+        { title: 'Cancelar' }
+      ],
+      priority: 2,
+      requireInteraction: true
+    });
+    
+    // Configurar listener para botón de notificación (si no está configurado ya)
+    if (!chrome.notifications.onButtonClicked.hasListeners()) {
+      chrome.notifications.onButtonClicked.addListener(async (notifId, buttonIndex) => {
+        // Verificar si es una de nuestras notificaciones
+        if (pendingNotificationsCredentials.has(notifId)) {
+          const credentials = pendingNotificationsCredentials.get(notifId);
+          
+          // Botón 0 = Guardar, Botón 1 = Cancelar
+          if (buttonIndex === 0) {
+            console.log(`Usuario eligió guardar credenciales de notificación ${notifId}`);
+            
+            // Guardar credenciales
+            const result = await guardarCredencialesEnFirebase(credentials);
+            if (result.success) {
+              chrome.notifications.create({
+                type: 'basic',
+                iconUrl: chrome.runtime.getURL('icons/logo_passwd.JPEG'),
+                title: 'PASSWD - Éxito',
+                message: 'Credenciales guardadas correctamente',
+                priority: 0
+              });
+            } else {
+              chrome.notifications.create({
+                type: 'basic',
+                iconUrl: chrome.runtime.getURL('icons/logo_passwd.JPEG'),
+                title: 'PASSWD - Error',
+                message: `Error al guardar: ${result.error}`,
+                priority: 0
+              });
+            }
+          } else {
+            console.log(`Usuario eligió cancelar guardar credenciales de notificación ${notifId}`);
+          }
+          
+          // Limpiar de la colección
+          pendingNotificationsCredentials.delete(notifId);
+          
+          // Cerrar la notificación
+          chrome.notifications.clear(notifId);
+        }
       });
     }
     
-    // Cerrar la notificación
-    chrome.notifications.clear(notificationId);
+    sendResponse({ success: true, notificationId });
+  } catch (e) {
+    console.error('Error en handleShowSaveNotification:', e);
+    sendResponse({ success: false, error: e.message });
   }
-});
+}
 
-// Función para obtener credenciales del servidor local
-async function obtenerCredenciales(dominio) {
+// Función para precargar credenciales para un tab
+async function precargarCredencialesParaTab(tab) {
   try {
-    if (!dominio) {
-      console.warn('No se proporcionó dominio para obtener credenciales');
+    if (!tab || !tab.url) return [];
+    
+    const url = new URL(tab.url);
+    const dominio = getBaseDomain(url.hostname);
+    
+    console.log(`Precargando credenciales para dominio: ${dominio}`);
+    
+    // Verificar si hay usuario autenticado
+    if (!firebaseService) {
+      console.log('Servicio de Firebase no disponible, no se pueden precargar credenciales');
       return [];
     }
     
-    // Extraer el dominio base para búsqueda en el servidor
-    const dominioBase = getBaseDomain(dominio);
-    console.log(`Obteniendo credenciales para: ${dominio} (dominio base: ${dominioBase})`);
-    
-    // Intentaremos múltiples endpoints y formatos para asegurar compatibilidad
-    const endpoints = [
-      // Nuevo endpoint API con POST
-      { 
-        url: getServerUrl(`${FLUTTER_SERVER.API_PATH}${FLUTTER_SERVER.SEARCH_ENDPOINT}`),
-        method: 'POST',
-        body: JSON.stringify({ term: dominioBase }),
-        contentType: 'application/json'
-      },
-      // Endpoint antiguo con GET
-      { 
-        url: getServerUrl(FLUTTER_SERVER.GET_CREDENTIALS_ENDPOINT, { sitio: dominioBase }),
-        method: 'GET',
-        contentType: 'application/json'
-      },
-      // Alternativa para GET con parámetro diferente
-      { 
-        url: getServerUrl(FLUTTER_SERVER.GET_CREDENTIALS_ENDPOINT, { domain: dominioBase }),
-        method: 'GET',
-        contentType: 'application/json'
-      }
-    ];
-    
-    // Para Google, añadir búsqueda alternativa
-    if (dominioBase.includes('google.com') || dominio.includes('google.com')) {
-      endpoints.push(
-        { 
-          url: getServerUrl(`${FLUTTER_SERVER.API_PATH}${FLUTTER_SERVER.SEARCH_ENDPOINT}`),
-          method: 'POST',
-          body: JSON.stringify({ term: 'google' }),
-          contentType: 'application/json'
-        },
-        { 
-          url: getServerUrl(FLUTTER_SERVER.GET_CREDENTIALS_ENDPOINT, { sitio: 'google' }),
-          method: 'GET',
-          contentType: 'application/json'
-        }
-      );
+    const isAuthenticated = await firebaseService.isUserAuthenticated();
+    if (!isAuthenticated) {
+      console.log('Usuario no autenticado, no se pueden precargar credenciales');
+      return [];
     }
     
-    // Probar cada endpoint hasta encontrar uno que funcione
-    let lastError = null;
-    for (const endpoint of endpoints) {
-      try {
-        console.log(`Intentando con: ${endpoint.method} ${endpoint.url}`);
-        
-        const response = await fetch(endpoint.url, {
-          method: endpoint.method,
-          headers: {
-            'Content-Type': endpoint.contentType
-          },
-          body: endpoint.method === 'POST' ? endpoint.body : undefined
-        });
-        
-        console.log(`Respuesta del servidor: ${response.status} ${response.statusText}`);
-        
-        if (response.ok) {
-          const data = await response.json();
-          console.log('Datos recibidos:', data);
-          
-          const credenciales = processCredentialsData(data);
-          if (credenciales.length > 0) {
-            console.log(`Se encontraron ${credenciales.length} credenciales con endpoint: ${endpoint.method} ${endpoint.url}`);
-            return credenciales;
-          } else {
-            console.log(`No se encontraron credenciales con endpoint: ${endpoint.method} ${endpoint.url}`);
-          }
-        } else {
-          console.log(`Error con endpoint ${endpoint.method} ${endpoint.url}: ${response.status}`);
-          lastError = new Error(`Error al obtener credenciales: ${response.status} ${response.statusText}`);
-        }
-      } catch (e) {
-        console.warn(`Error al intentar endpoint ${endpoint.method} ${endpoint.url}:`, e);
-        lastError = e;
-      }
-    }
+    // Obtener credenciales
+    const resultado = await obtenerCredenciales(dominio);
     
-    // Si llegamos aquí, ningún endpoint funcionó
-    if (lastError) {
-      throw lastError;
+    if (resultado.success) {
+      const processedData = processCredentialsData(resultado);
+      return processedData.credenciales;
     } else {
-      throw new Error('No se pudo conectar con el servidor de credenciales');
+      console.error('Error al precargar credenciales:', resultado.error);
+      return [];
     }
   } catch (e) {
-    console.error(`Error al obtener credenciales para ${dominio}:`, e);
+    console.error('Error al precargar credenciales:', e);
     return [];
   }
 }
 
-// Función auxiliar para procesar diferentes formatos de datos de credenciales
-function processCredentialsData(data) {
-  if (data && Array.isArray(data.items)) {
-    console.log(`Se encontraron ${data.items.length} credenciales (formato items)`);
-    return data.items.map(item => ({
-      id: item.id || '',
-      sitio: item.site || item.sitio || '',
-      usuario: item.username || item.usuario || '',
-      password: item.password || item.pass || item.contraseña || '',
-      notas: item.notes || item.notas || ''
-    }));
-  } else if (data && Array.isArray(data.credenciales)) {
-    console.log(`Se encontraron ${data.credenciales.length} credenciales (formato credenciales)`);
-    return data.credenciales.map(item => ({
-      id: item.id || '',
-      sitio: item.sitio || item.site || '',
-      usuario: item.usuario || item.username || '',
-      password: item.password || item.contraseña || item.pass || '',
-      notas: item.notas || item.notes || ''
-    }));
-  } else if (data && Array.isArray(data)) {
-    console.log(`Se encontraron ${data.length} credenciales (formato array)`);
-    return data.map(item => ({
-      id: item.id || '',
-      sitio: item.site || item.sitio || '',
-      usuario: item.username || item.usuario || '',
-      password: item.password || item.contraseña || item.pass || '',
-      notas: item.notes || item.notas || ''
-    }));
-  }
+// Función para intentar iniciar sesión automáticamente con credenciales almacenadas
+async function intentarLoginAutomatico() {
+  console.log('Intentando iniciar sesión automáticamente si hay credenciales almacenadas...');
   
-  console.log('No se encontró un formato de datos reconocible');
-  return [];
-}
-
-// Enviar credenciales cacheadas al content script para un tab específico
-function enviarCredencialesCacheadas(tab) {
   try {
-    if (!tab || !tab.url || !tab.id) {
-      console.warn('Tab inválido para enviar credenciales');
-      return;
-    }
-
-    const url = new URL(tab.url);
-    const dominio = url.hostname;
+    // Verificar si hay credenciales de Firebase almacenadas localmente
+    const data = await new Promise(resolve => {
+      chrome.storage.local.get(['userEmail', 'userPassword', 'userAuthenticated'], resolve);
+    });
     
-    if (!dominio) {
-      console.warn('No se pudo extraer el dominio de:', tab.url);
-      return;
-    }
+    console.log(`Estado de autenticación en storage: ${data.userAuthenticated ? 'Autenticado' : 'No autenticado'}`);
+    console.log(`Email en storage: ${data.userEmail ? 'Disponible' : 'No disponible'}`);
+    console.log(`Contraseña en storage: ${data.userPassword ? 'Disponible' : 'No disponible'}`);
     
-    console.log(`Enviando credenciales para dominio: ${dominio}`);
-    
-    // Verificar caché
-    if (credencialesCache.has(dominio)) {
-      const cacheData = credencialesCache.get(dominio);
-      const ahora = Date.now();
+    // Si tenemos email y contraseña, y deberíamos estar autenticados pero no lo estamos, intentar login
+    if (data.userEmail && data.userPassword && data.userAuthenticated && 
+        (!firebaseService || !(await firebaseService.isUserAuthenticated()))) {
       
-      // Si el caché tiene menos de 15 minutos, usarlo
-      if (ahora - cacheData.timestamp < 15 * 60 * 1000) {
-        console.log(`Usando caché para ${dominio}, ${cacheData.credenciales.length} credenciales`);
-        
-        // Enviar credenciales sin filtrar (ya están filtradas)
-        chrome.tabs.sendMessage(tab.id, {
-          accion: 'set_credentials',
-          credenciales: cacheData.credenciales
-        }).catch(e => {
-          console.error('Error al enviar credenciales desde caché:', e);
-          // No reintentamos inmediatamente, el content script solicitará si es necesario
-        });
-        
-        return;
+      console.log(`Intentando reconectar sesión para: ${data.userEmail}`);
+      
+      // Verificar si Firebase está disponible
+      if (!firebaseService) {
+        console.log('Firebase Service no disponible, intentando reinicializar...');
+        await reinitializeFirebaseService();
+        if (!firebaseService) {
+          console.error('No se pudo inicializar Firebase Service');
+          return false;
+        }
       }
-    }
-    
-    // Si no hay caché válida, cargar del servidor
-    obtenerCredenciales(dominio)
-      .then(credenciales => {
-        console.log(`Obtenidas ${credenciales.length} credenciales del servidor`);
+      
+      // Intentar login
+      const result = await firebaseService.login(data.userEmail, data.userPassword);
+      
+      if (result.success) {
+        console.log(`Sesión recuperada exitosamente para ${data.userEmail}`);
         
-        if (credenciales.length === 0) {
-          console.log('No se encontraron credenciales, no actualizando caché');
-          return;
+        // Actualizar estado
+        chrome.storage.local.set({ userAuthenticated: true });
+        
+        // Actualizar popup
+        chrome.action.setPopup({ popup: 'popup.html' });
+        
+        return true;
+      } else {
+        console.error('No se pudo recuperar la sesión:', result.error);
+        
+        // Si hubo un error de autenticación, limpiar datos de autenticación para evitar reintentos fallidos
+        if (result.error.includes('credentials') || result.error.includes('password') || 
+            result.error.includes('auth/user-not-found')) {
+          console.log('Limpiando credenciales almacenadas debido a error de autenticación');
+          chrome.storage.local.set({ 
+            userAuthenticated: false,
+            userPassword: null 
+          });
         }
         
-        // Guardar en caché y filtrar
-        const credencialesFiltradas = guardarCredencialesEnCache(dominio, credenciales);
-        
-        // Enviar al content script
-        return chrome.tabs.sendMessage(tab.id, {
-          accion: 'set_credentials',
-          credenciales: credencialesFiltradas
-        }).catch(e => {
-          console.error('Error al enviar credenciales:', e);
-          // No reintentamos inmediatamente, el content script solicitará si es necesario
-        });
-      })
-      .catch(e => {
-        console.error('Error al cargar credenciales para enviar:', e);
-      });
-  } catch (e) {
-    console.error('Error al procesar URL para credenciales:', e);
-  }
-}
-
-// Escuchar cambios de tabs para garantizar que los content scripts estén listos
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'complete' && tab.url && tab.url.startsWith('http')) {
-    console.log('Tab actualizada (completa):', tabId, tab.url);
-    
-    // Esperar un poco antes de inyectar el script para asegurar que la página está lista
-    setTimeout(() => {
-      // Forzar inyección del content script
-      inyectarContentScript(tabId, tab);
-      
-      // Proactivamente cargar y enviar credenciales para este dominio,
-      // sin esperar a que el content script las solicite
-      precargarCredencialesParaTab(tab);
-    }, 500);
-  }
-});
-
-// Función para inyectar el content script
-function inyectarContentScript(tabId, tab) {
-  // Verificar primero si el content script ya está activo
-  chrome.tabs.sendMessage(tabId, { accion: 'check_ready' }, (response) => {
-    const error = chrome.runtime.lastError;
-    if (error) {
-      // Mostrar mensaje de error específico para ayudar a debuggear
-      console.log(`Content script no responde en tab ${tabId}, error:`, JSON.stringify(error));
-      console.log(`Inyectando script en tab ${tabId}...`);
-      // Inyectar el script directamente sin verificación adicional
-      injectScript(tabId, tab);
-    } else if (response && response.ready) {
-      console.log(`Content script ya activo en tab ${tabId}`);
-      // El script está listo, intentar enviar credenciales cacheadas si las hay
-      enviarCredencialesCacheadas(tab);
+        return false;
+      }
+    } else if (!data.userAuthenticated) {
+      console.log('Usuario no está marcado como autenticado en storage');
+      return false;
+    } else if (firebaseService && (await firebaseService.isUserAuthenticated())) {
+      console.log('Usuario ya está autenticado, no es necesario reconectar');
+      return true;
     } else {
-      console.log(`Respuesta inesperada del content script en tab ${tabId}:`, response);
-      // Inyectar de todos modos para asegurarnos
-      injectScript(tabId, tab);
+      console.log('No hay suficiente información para intentar reconectar sesión');
+      return false;
     }
-  });
+  } catch (error) {
+    console.error('Error al intentar login automático:', error);
+    return false;
+  }
 }
 
-// Función simplificada para la inyección directa de scripts
-function injectScript(tabId, tab) {
-  chrome.scripting.executeScript({
-    target: { tabId: tabId },
-    files: ['content.js']
-  })
-  .then(() => {
-    console.log(`Content script inyectado con éxito en tab ${tabId}`);
-    // Esperar un poco y luego verificar si el script está activo
-    setTimeout(() => {
-      verifyAndSendCredentials(tabId, tab);
-    }, 300);
-  })
-  .catch(error => {
-    // Manejar el error específicamente
-    console.error(`Error al inyectar script en tab ${tabId}:`, error.message);
-    if (error.message.includes('Cannot access contents of url')) {
-      console.log(`No se puede acceder al contenido de la página ${tab.url} - podría ser una página restringida`);
-    }
-  });
-}
-
-// Verificar si el content script está listo y enviar credenciales
-function verifyAndSendCredentials(tabId, tab) {
-  // Intentar contactar al content script
-  chrome.tabs.sendMessage(tabId, { accion: 'check_ready' })
-    .then(response => {
-      if (response && response.ready) {
-        console.log(`Content script está listo en tab ${tabId}, enviando credenciales...`);
+// Función para verificar y reparar el estado de autenticación
+function checkAndRepairAuthState() {
+  console.log('=== VERIFICANDO Y REPARANDO ESTADO DE AUTENTICACIÓN ===');
+  
+  return new Promise((resolve) => {
+    // Verificar estado en storage
+    chrome.storage.local.get(['userAuthenticated', 'userEmail', 'userId', 'savedEmail', 'savedPassword', 'lastAuthTime'], async (data) => {
+      const estadoAlmacenado = data.userAuthenticated ? 'Autenticado' : 'No autenticado';
+      const emailAlmacenado = data.userEmail ? data.userEmail : 'No disponible';
+      const passwordAlmacenada = data.savedPassword ? 'Disponible' : 'No disponible';
+      
+      console.log('Estado almacenado:', estadoAlmacenado);
+      console.log('Email almacenado:', emailAlmacenado);
+      console.log('Contraseña almacenada:', passwordAlmacenada);
+      
+      // Verificar estado en Firebase
+      let usuarioActual = null;
+      try {
+        if (firebaseService && firebaseService.auth) {
+          usuarioActual = await firebaseService.getCurrentUser();
+        }
+      } catch (error) {
+        console.error('Error al obtener usuario actual:', error);
+      }
+      
+      console.log('Usuario actual en Firebase:', usuarioActual ? usuarioActual.email : 'No autenticado');
+      
+      // Determinar el estado real basado en Firebase (más confiable)
+      const estadoRealAutenticacion = usuarioActual !== null;
+      console.log('Estado real de autenticación:', estadoRealAutenticacion ? 'Autenticado' : 'No autenticado');
+      
+      // Verificar si hay discrepancia
+      if (estadoRealAutenticacion !== data.userAuthenticated) {
+        console.log('Discrepancia detectada: Storage indica', estadoAlmacenado, 'pero Firebase indica', estadoRealAutenticacion ? 'autenticado' : 'no autenticado');
         
-        // Enviar credenciales inmediatamente
-        enviarCredencialesAlTab(tabId, tab);
-        
-        // También registrar que el script está listo
-        if (!contentScriptsReady.has(tabId)) {
-          contentScriptsReady.set(tabId, {
-            timestamp: Date.now(),
-            url: tab.url
+        // Caso 1: Storage dice autenticado pero Firebase no
+        if (data.userAuthenticated && !estadoRealAutenticacion) {
+          console.log('Intentando recuperar sesión con credenciales guardadas...');
+          
+          // Verificar si tenemos credenciales guardadas para recuperar la sesión
+          if (data.savedEmail && data.savedPassword) {
+            try {
+              // Intentar iniciar sesión nuevamente
+              const resultado = await firebaseService.login(data.savedEmail, data.savedPassword);
+              if (resultado.success) {
+                console.log('Sesión recuperada exitosamente para:', data.savedEmail);
+                // No necesitamos actualizar storage porque ya está como autenticado
+                resolve(true);
+        return;
+              } else {
+                console.error('Error al intentar recuperar sesión:', resultado.error);
+              }
+            } catch (error) {
+              console.error('Excepción al intentar recuperar sesión:', error);
+            }
+        } else {
+            console.log('No hay credenciales suficientes para recuperar la sesión');
+          }
+          
+          // Si llegamos aquí, no se pudo recuperar la sesión
+          chrome.storage.local.set({ 
+            'userAuthenticated': false,
+            'lastAuthTime': null 
+          }, () => {
+            console.log('Estado de autenticación corregido a: No autenticado');
+            resolve(false);
+          });
+        }
+        // Caso 2: Storage dice no autenticado pero Firebase sí
+        else if (!data.userAuthenticated && estadoRealAutenticacion) {
+          console.log('Firebase indica autenticado pero storage no, actualizando storage...');
+          chrome.storage.local.set({ 
+            'userAuthenticated': true,
+            'userEmail': usuarioActual.email,
+            'userId': usuarioActual.uid,
+            'lastAuthTime': Date.now()
+          }, () => {
+            console.log('Estado de autenticación corregido a: Autenticado');
+            resolve(true);
           });
         }
       } else {
-        console.log(`Content script respondió pero no está listo en tab ${tabId}`);
-        // Reintentar después de un breve retraso
-        setTimeout(() => verifyAndSendCredentials(tabId, tab), 1000);
+        console.log('Estado coherente:', data.userAuthenticated ? 'Autenticado tanto en Firebase como en Storage' : 'No autenticado ni en Firebase ni en Storage');
+        resolve(estadoRealAutenticacion);
       }
-    })
-    .catch(error => {
-      console.error(`Error al verificar si el content script está listo: ${error}`);
-      // Probablemente el content script no está inyectado todavía o no responde
-      // Reintentar menos frecuentemente
-      setTimeout(() => verifyAndSendCredentials(tabId, tab), 2000);
+      
+      // Verificar si hay que renovar el token (cada 45 minutos)
+      if (estadoRealAutenticacion && data.lastAuthTime) {
+        const tiempoTranscurrido = Date.now() - data.lastAuthTime;
+        const MAX_TOKEN_AGE = 45 * 60 * 1000; // 45 minutos en milisegundos
+        
+        if (tiempoTranscurrido > MAX_TOKEN_AGE) {
+          console.log('Token antiguo, actualizando timestamp para mantener la sesión fresca');
+          chrome.storage.local.set({ 'lastAuthTime': Date.now() });
+        }
+      }
+      
+      console.log('=== FIN DE VERIFICACIÓN Y REPARACIÓN ===');
     });
-}
-
-// Enviar credenciales al tab, usando caché si está disponible o cargando del servidor
-function enviarCredencialesAlTab(tabId, tab) {
-  try {
-    if (!tab || !tab.url) {
-      console.warn('Tab inválido para enviar credenciales');
-      return;
-    }
-
-    const url = new URL(tab.url);
-    const dominio = url.hostname;
-    
-    if (!dominio) {
-      console.warn('No se pudo extraer el dominio de:', tab.url);
-      return;
-    }
-    
-    console.log(`📤 Enviando credenciales al tab ${tabId} para dominio: ${dominio}`);
-    
-    // Verificar caché
-    if (credencialesCache.has(dominio)) {
-      const cacheData = credencialesCache.get(dominio);
-      const ahora = Date.now();
-      
-      // Si el caché tiene menos de 15 minutos, usarlo
-      if (ahora - cacheData.timestamp < 15 * 60 * 1000) {
-        console.log(`📋 Usando caché para ${dominio}, enviando ${cacheData.credenciales.length} credenciales`);
-        
-        // Enviar credenciales inmediatamente
-        chrome.tabs.sendMessage(tabId, {
-          accion: 'set_credentials',
-          credenciales: cacheData.credenciales
-        }).catch(e => {
-          console.error('Error al enviar credenciales desde caché:', e);
-        });
-        
-        return;
-      }
-    }
-    
-    // No hay caché válida, intentar cargar del servidor y enviar
-    console.log(`🔄 No hay caché para ${dominio}, cargando del servidor...`);
-    obtenerCredenciales(dominio)
-      .then(credenciales => {
-        // Guardar en caché para uso futuro
-        const credencialesFiltradas = guardarCredencialesEnCache(dominio, credenciales);
-        
-        console.log(`📤 Enviando ${credencialesFiltradas.length} credenciales al tab ${tabId}`);
-        
-        // Enviar al content script
-        return chrome.tabs.sendMessage(tabId, {
-          accion: 'set_credentials',
-          credenciales: credencialesFiltradas
-        });
-      })
-      .catch(e => {
-        console.error(`❌ Error al cargar/enviar credenciales: ${e.message}`);
-      });
-  } catch (e) {
-    console.error('Error al procesar URL para enviar credenciales:', e);
-  }
-}
-
-// Conectarse con el gestor de contraseñas y obtener credenciales según la URL
-chrome.action.onClicked.addListener(async (tab) => {
-  console.log('Boton de extension clickeado en tab:', tab.id, tab.url);
-  
-  try {
-    // Obtenemos la URL del dominio actual
-    if (!tab.url) {
-      console.error('La pestana no tiene URL');
-      return;
-    }
-    
-    const url = new URL(tab.url);
-    const dominio = url.hostname;
-    console.log('Dominio detectado:', dominio);
-    
-    // Comprobamos conexión con el gestor
-    try {
-      console.log('Verificando conexion con PASSWD...');
-      const testResponse = await fetch('http://localhost:8080/status', {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-        mode: 'cors'
-      }).catch(error => {
-        console.error('Error al conectar con el servidor de PASSWD:', error);
-        throw new Error('No se pudo conectar con el gestor de contraseñas');
-      });
-      
-      if (!testResponse || !testResponse.ok) {
-        console.error('El servidor de PASSWD no está respondiendo correctamente');
-        // Intentar con la ruta de prueba alternativa
-        const altTestResponse = await fetch('http://localhost:8080/get-credentials?sitio=test', {
-          method: 'GET',
-          headers: { 'Content-Type': 'application/json' },
-          mode: 'cors'
-        });
-        
-        if (!altTestResponse) {
-          throw new Error('No se pudo conectar con el servidor de PASSWD');
-        }
-      }
-      
-      console.log('Conexión con PASSWD verificada');
-      
-    } catch (connectionError) {
-      console.error('Error al verificar conexion:', connectionError);
-      throw new Error('No se pudo conectar con el gestor de contrasenas. Verifique que la aplicacion PASSWD este en ejecucion.');
-    }
-    
-    // Verificar que el content script está activo e inyectarlo si no
-    inyectarContentScript(tab.id, tab);
-    
-    // Abrir el popup
-    setTimeout(() => {
-      console.log('Abriendo popup...');
-      chrome.action.openPopup();
-    }, 500);
-    
-  } catch (error) {
-    console.error('Error en background script:', error);
-    chrome.action.openPopup();
-  }
   });
-
-// Nueva función para precargar credenciales sin esperar solicitud
-async function precargarCredencialesParaTab(tab) {
-  if (!tab || !tab.url) return;
-  
-  try {
-    const url = new URL(tab.url);
-    const dominio = url.hostname;
-    
-    if (!dominio) return;
-    
-    console.log(`🔍 Precargando credenciales para: ${dominio}`);
-    
-    // Verificar si ya tenemos credenciales en caché
-    if (credencialesCache.has(dominio)) {
-      const cacheData = credencialesCache.get(dominio);
-      const ahora = Date.now();
-      
-      // Si el caché es reciente (menos de 15 minutos), usarlo
-      if (ahora - cacheData.timestamp < 15 * 60 * 1000) {
-        console.log(`✓ Usando caché para precargar ${dominio} - ${cacheData.credenciales.length} credenciales`);
-        // Las credenciales se enviarán cuando el content script esté listo
-        return;
-      }
-    }
-    
-    // No hay caché reciente, obtener del servidor en segundo plano
-    console.log(`🔄 Obteniendo credenciales para ${dominio} del servidor...`);
-    obtenerCredenciales(dominio)
-      .then(credenciales => {
-        if (credenciales.length > 0) {
-          console.log(`✅ Precargadas ${credenciales.length} credenciales para ${dominio}`);
-          // Guardar en caché para uso futuro
-          guardarCredencialesEnCache(dominio, credenciales);
-        } else {
-          console.log(`ℹ️ No se encontraron credenciales para ${dominio}`);
-        }
-      })
-      .catch(error => {
-        console.error(`❌ Error al precargar credenciales: ${error.message}`);
-      });
-    
-  } catch (error) {
-    console.error('Error al precargar credenciales:', error);
-  }
 }

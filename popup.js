@@ -227,19 +227,34 @@ document.addEventListener('DOMContentLoaded', function() {
   
   // Función para verificar si el content script tiene credenciales disponibles
   async function getCredentialsFromContentScript(tabId) {
-    try {
-      const response = await chrome.tabs.sendMessage(tabId, { accion: 'get_available_credentials' });
-      if (response && response.credenciales && response.credenciales.length > 0) {
-        console.log(`Content script tiene ${response.credenciales.length} credenciales`);
-        return response.credenciales;
-      } else {
-        console.log('Content script no tiene credenciales disponibles');
-        return null;
+    return new Promise((resolve) => {
+      try {
+        chrome.tabs.sendMessage(tabId, { accion: 'get_available_credentials' }, (response) => {
+          if (chrome.runtime.lastError) {
+            console.log('Error al obtener credenciales del content script:', chrome.runtime.lastError.message);
+            resolve(null);
+            return;
+          }
+          
+          if (response && response.credenciales && response.credenciales.length > 0) {
+            console.log(`Content script tiene ${response.credenciales.length} credenciales`);
+            resolve(response.credenciales);
+          } else {
+            console.log('Content script no tiene credenciales disponibles');
+            resolve(null);
+          }
+        });
+        
+        // Timeout de seguridad para evitar bloqueos
+        setTimeout(() => {
+          console.log('Timeout al esperar respuesta del content script');
+          resolve(null);
+        }, 1500);
+      } catch (error) {
+        console.log('Error al obtener credenciales del content script:', error.message);
+        resolve(null);
       }
-    } catch (error) {
-      console.log('Error al obtener credenciales del content script:', error.message);
-      return null;
-    }
+    });
   }
   
   // Función para buscar credenciales del sitio actual
@@ -260,46 +275,22 @@ document.addEventListener('DOMContentLoaded', function() {
       // Verificar si el content script está listo en la página actual
       const isContentScriptReady = await checkContentScriptReady(currentTab.id);
       if (!isContentScriptReady) {
-        showStatus('Error: No se pudo establecer conexión con la página. Intente recargar la página.', 'error');
-        showLoader(false);
-        
-        // Intentar inyectar el content script vía background
-        try {
-          chrome.runtime.sendMessage({
-            action: "inject_content_script",
-            tabId: currentTab.id
-          });
-        } catch (e) {
-          console.error('Error al solicitar inyección de content script:', e);
+        console.log('Content script no está listo, se intentará obtener credenciales directamente del background script');
+      } else {
+        // Primero verificar si el content script ya tiene credenciales
+        const contentScriptCredenciales = await getCredentialsFromContentScript(currentTab.id);
+        if (contentScriptCredenciales && contentScriptCredenciales.length > 0) {
+          console.log(`Usando ${contentScriptCredenciales.length} credenciales del content script`);
+          
+          // Mostrar las credenciales del content script
+          showCredentialsList(contentScriptCredenciales);
+          showStatus(`Se encontraron ${contentScriptCredenciales.length} credenciales para este sitio`, 'success');
+          showLoader(false);
+          return;
         }
-        
-        return;
       }
       
-      // Primero verificar si el content script ya tiene credenciales
-      const contentScriptCredenciales = await getCredentialsFromContentScript(currentTab.id);
-      if (contentScriptCredenciales && contentScriptCredenciales.length > 0) {
-        console.log(`Usando ${contentScriptCredenciales.length} credenciales del content script`);
-        
-        // Mostrar las credenciales del content script
-        showCredentialsList(contentScriptCredenciales);
-        showStatus(`Se encontraron ${contentScriptCredenciales.length} credenciales para este sitio`, 'success');
-        showLoader(false);
-        return;
-      }
-      
-      // Si no hay credenciales en el content script, continuar con la búsqueda normal
-      
-      // Verificar si la página tiene un formulario de login
-      const hasLoginForm = await checkLoginForm(currentTab.id);
-      
-      // Para Google, queremos continuar incluso si no detectamos un formulario inicialmente
-      const isGoogleAuth = currentDomain.includes('google.com');
-      
-      // Continuamos aunque no haya un formulario de login detectado
-      if (!hasLoginForm && !isGoogleAuth) {
-        console.log('No se detectó un formulario de login, pero continuando con la búsqueda de credenciales');
-      }
+      // Si no hay credenciales en el content script o no está listo, obtenemos directamente del background
       
       // Obtener el dominio base para la búsqueda (sin subdominio www.)
       const baseDomain = getBaseDomain(currentDomain);
@@ -312,6 +303,36 @@ document.addEventListener('DOMContentLoaded', function() {
       const searchTerm = isGoogleDomain ? 'google' : baseDomain;
       console.log(`Usando término de búsqueda: ${searchTerm} (es dominio Google: ${isGoogleDomain})`);
       
+      // Primero solicitar credenciales directamente del background script
+      try {
+        console.log('Solicitando credenciales al background script para:', searchTerm);
+        const response = await chrome.runtime.sendMessage({
+          action: 'get_credentials_for_site',
+          url: currentTab.url,
+          dominio: currentDomain
+        });
+        
+        console.log('Respuesta del background script:', response);
+        
+        if (response && response.credenciales && response.credenciales.length > 0) {
+          console.log(`Recibidas ${response.credenciales.length} credenciales del background script`);
+          
+          // Mostrar las credenciales obtenidas
+          showCredentialsList(response.credenciales);
+          showStatus(`Se encontraron ${response.credenciales.length} credenciales para este sitio`, 'success');
+          showLoader(false);
+          
+          // Compartir con el content script
+          enviarCredencialesAlContentScript(response.credenciales);
+          return;
+        } else {
+          console.log('No se recibieron credenciales del background script, continuando con búsqueda normal');
+        }
+      } catch (error) {
+        console.warn('Error al solicitar credenciales al background script:', error);
+      }
+      
+      // Si no obtuvimos credenciales del background, intentar con los endpoints
       // Primero verificar la conexión con el servidor
       const serverConnected = await testServerConnection();
       if (!serverConnected) {
@@ -392,27 +413,64 @@ document.addEventListener('DOMContentLoaded', function() {
   
   // Función para enviar credenciales al content script
   function enviarCredencialesAlContentScript(credenciales) {
-    if (!currentTab || !currentTab.id) return;
-    
-    // Intentar enviar varias veces con intervalos
-    let intentos = 0;
-    const maxIntentos = 3;
-    
-    function intentarEnviar() {
-      chrome.tabs.sendMessage(currentTab.id, {
-        accion: 'set_credentials',
-        credenciales: credenciales
-      }).then(() => {
-        console.log('Credenciales enviadas al content script con éxito');
-      }).catch(e => {
-        console.log(`Error al enviar credenciales al content script (intento ${intentos + 1}/${maxIntentos}):`, e);
-        if (++intentos < maxIntentos) {
-          setTimeout(intentarEnviar, 500);
-        }
-      });
+    if (!currentTab || !currentTab.id) {
+      console.error('No hay una pestaña activa para enviar credenciales');
+      return;
     }
     
+    console.log(`Enviando ${credenciales.length} credenciales al content script...`);
+    
+    // Función de intento con reintento
+    function intentarEnviar(intentos = 0) {
+      if (intentos > 3) {
+        console.error('Demasiados intentos fallidos al enviar credenciales al content script');
+        return;
+      }
+      
+      try {
+        chrome.tabs.sendMessage(currentTab.id, {
+          accion: 'update_available_credentials',
+          credenciales: credenciales
+        }, (response) => {
+          if (chrome.runtime.lastError) {
+            console.warn(`Error al enviar credenciales (intento ${intentos}):`, chrome.runtime.lastError);
+            
+            // Reintento tras un breve retraso con backoff exponencial
+            setTimeout(() => {
+              intentarEnviar(intentos + 1);
+            }, 300 * Math.pow(2, intentos));
+            return;
+          }
+          
+          if (response && response.success) {
+            console.log('Credenciales enviadas correctamente al content script');
+          } else {
+            console.warn('Respuesta inesperada del content script:', response);
+          }
+        });
+      } catch (error) {
+        console.error('Error al enviar mensaje al content script:', error);
+        
+        // Reintento tras un breve retraso
+        setTimeout(() => {
+          intentarEnviar(intentos + 1);
+        }, 300 * Math.pow(2, intentos));
+      }
+    }
+    
+    // Iniciar el intento de envío
     intentarEnviar();
+    
+    // También enviar a través del background como respaldo
+    try {
+      chrome.runtime.sendMessage({
+        action: 'update_content_script_credentials',
+        tabId: currentTab.id,
+        credenciales: credenciales
+      });
+    } catch (e) {
+      console.warn('Error al enviar credenciales vía background:', e);
+    }
   }
   
   // Función para filtrar credenciales por dominio de manera consistente
@@ -556,11 +614,17 @@ document.addEventListener('DOMContentLoaded', function() {
     // Limpiar lista anterior
     accountsList.innerHTML = '';
     
-    if (credenciales.length === 0) {
+    if (!credenciales || credenciales.length === 0) {
       accountsList.innerHTML = '<div class="no-accounts">No se encontraron credenciales disponibles</div>';
       accountsList.style.display = 'block';
       return;
     }
+    
+    console.log('Mostrando lista de credenciales:', credenciales.map(c => ({
+      sitio: c.sitio || c.site,
+      usuario: c.usuario || c.username || c.email,
+      tieneContraseña: !!(c.contraseña || c.password || c.pass)
+    })));
     
     // Crear elementos para cada credencial
     credenciales.forEach(credencial => {
@@ -570,13 +634,17 @@ document.addEventListener('DOMContentLoaded', function() {
       const accountInfo = document.createElement('div');
       accountInfo.className = 'account-info';
       
+      // Usar cualquier propiedad disponible para el usuario
+      const usuarioValue = credencial.usuario || credencial.username || credencial.email || 'Usuario sin nombre';
+      const sitioValue = credencial.sitio || credencial.site || credencial.url || 'Sitio desconocido';
+      
       const username = document.createElement('div');
       username.className = 'account-username';
-      username.textContent = credencial.usuario;
+      username.textContent = usuarioValue;
       
       const site = document.createElement('div');
       site.className = 'account-site';
-      site.textContent = credencial.sitio;
+      site.textContent = sitioValue;
       
       accountInfo.appendChild(username);
       accountInfo.appendChild(site);
@@ -633,20 +701,30 @@ document.addEventListener('DOMContentLoaded', function() {
     showStatus('Rellenando formulario...', 'warning');
 
     // Debug: mostrar la estructura de la credencial
-    console.log('Credencial a utilizar:', JSON.stringify(credencial));
+    console.log('Credencial a utilizar:', JSON.stringify({
+      ...credencial,
+      contraseña: credencial.contraseña ? '***' : undefined,
+      password: credencial.password ? '***' : undefined,
+      pass: credencial.pass ? '***' : undefined
+    }));
     
     // Normalizar los datos para asegurar que las propiedades sean correctas
     const datosNormalizados = {
-      usuario: credencial.usuario || credencial.username || '',
-      contraseña: credencial.password || credencial.contraseña || credencial.pass || '',
-      sitio: credencial.sitio || credencial.site || ''
+      usuario: credencial.usuario || credencial.username || credencial.email || '',
+      contraseña: credencial.contraseña || credencial.password || credencial.pass || '',
+      sitio: credencial.sitio || credencial.site || credencial.url || ''
     };
     
-    console.log('Datos normalizados:', JSON.stringify(datosNormalizados));
+    console.log('Datos normalizados para rellenar formulario:', {
+      usuario: datosNormalizados.usuario,
+      contraseña: datosNormalizados.contraseña ? '***' : 'NO DISPONIBLE',
+      sitio: datosNormalizados.sitio
+    });
     
     // Verificar que tenemos una contraseña
     if (!datosNormalizados.contraseña) {
       console.error('No se encontró una contraseña válida en la credencial');
+      console.log('Propiedades disponibles en la credencial:', Object.keys(credencial));
       showStatus('Error: Credencial sin contraseña', 'error');
       return;
     }
@@ -660,6 +738,21 @@ document.addEventListener('DOMContentLoaded', function() {
     chrome.tabs.sendMessage(currentTab.id, {
       accion: "rellenar",
       datos: datosNormalizados
+    }).then(response => {
+      console.log('Respuesta al rellenar formulario:', response);
+    }).catch(error => {
+      console.error('Error al enviar mensaje al content script:', error);
+      
+      // Intentar también enviarlo a través del background script como respaldo
+      chrome.runtime.sendMessage({
+        action: 'fill_form',
+        tabId: currentTab.id,
+        credencial: datosNormalizados
+      }).then(response => {
+        console.log('Respuesta del background script al rellenar formulario:', response);
+      }).catch(error => {
+        console.error('Error al enviar mensaje al background script:', error);
+      });
     });
     
     // Cerrar el popup automáticamente después de un tiempo
@@ -684,56 +777,53 @@ document.addEventListener('DOMContentLoaded', function() {
   // Función para comprobar conexión con el gestor
   async function checkConnection() {
     try {
-      console.log('Comprobando conexion con el servidor PASSWD...');
+      console.log('Comprobando conexión con el servicio de Firebase...');
       
-      // Primero intentar con endpoint /status
-      try {
-        const statusUrl = 'http://localhost:8080/status';
-        console.log('Probando endpoint status:', statusUrl);
-        
-        const statusResponse = await fetch(statusUrl, {
-          method: 'GET',
-          headers: { 'Content-Type': 'application/json' },
-          mode: 'cors'
+      // Comprobar si el usuario está autenticado con Firebase
+      const authStatus = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({ action: 'check_auth_status' }, (response) => {
+          resolve(response);
         });
-        
-        if (statusResponse.ok) {
-          console.log('Servidor respondió correctamente a /status');
-          showStatus('Conectado al gestor de contraseñas PASSWD', 'success');
-          return true;
-        }
-      } catch (statusError) {
-        console.log('Error con endpoint /status, probando alternativa:', statusError);
-      }
-      
-      // Si /status falla, intentar con endpoint de credenciales de prueba
-      const testUrl = 'http://localhost:8080/get-credentials?sitio=test';
-      console.log('Probando endpoint credenciales:', testUrl);
-      
-      const response = await fetch(testUrl, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-        mode: 'cors'
       });
       
-      console.log('Respuesta recibida:', response);
-      
-      if (response.status === 404) {
-        console.log('Servidor respondio con 404 - Esto es esperado para el sitio de prueba');
-        showStatus('Conectado al gestor de contraseñas PASSWD', 'success');
-        return true;
-      } else if (response.ok) {
-        console.log('Servidor respondio correctamente');
+      if (authStatus && authStatus.isAuthenticated) {
+        console.log('Usuario autenticado en Firebase correctamente');
         showStatus('Conectado al gestor de contraseñas PASSWD', 'success');
         return true;
       } else {
-        console.log('Servidor respondio con estado:', response.status);
-        showStatus(`Error: Respuesta inesperada (${response.status})`, 'error');
+        console.log('Usuario no autenticado en Firebase');
+        showStatus('No conectado a Firebase - Inicie sesión', 'warning');
         return false;
       }
     } catch (error) {
-      console.error('Error al comprobar la conexion:', error);
+      console.error('Error al comprobar la conexión con Firebase:', error);
       showStatus(`Error de conexión: ${error.message}`, 'error');
+      return false;
+    }
+  }
+  
+  // Función para probar la conexión al servicio
+  // Similar a checkConnection pero diseñada específicamente para ser llamada dentro de searchCredentials
+  async function testServerConnection() {
+    try {
+      console.log('Verificando conexión con el servicio de Firebase...');
+      
+      // Comprobar si el usuario está autenticado con Firebase
+      const authStatus = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({ action: 'check_auth_status' }, (response) => {
+          resolve(response);
+        });
+      });
+      
+      if (authStatus && authStatus.isAuthenticated) {
+        console.log('Usuario autenticado en Firebase correctamente');
+        return true;
+      } else {
+        console.log('Usuario no autenticado en Firebase');
+        return false;
+      }
+    } catch (error) {
+      console.error('Error al comprobar la conexión con Firebase:', error);
       return false;
     }
   }
@@ -741,59 +831,6 @@ document.addEventListener('DOMContentLoaded', function() {
   // Función para mostrar/ocultar el loader
   function showLoader(show) {
     loader.style.display = show ? 'block' : 'none';
-  }
-  
-  // Función para probar la conexión al servidor
-  // Similar a checkConnection pero diseñada específicamente para ser llamada dentro de searchCredentials
-  async function testServerConnection() {
-    try {
-      console.log('Verificando conexión con el servidor PASSWD...');
-      
-      // Primero intentar con endpoint /status
-      try {
-        const statusUrl = 'http://localhost:8080/status';
-        console.log('Probando endpoint status:', statusUrl);
-        
-        const statusResponse = await fetch(statusUrl, {
-          method: 'GET',
-          headers: { 'Content-Type': 'application/json' },
-          mode: 'cors'
-        });
-        
-        if (statusResponse.ok) {
-          console.log('Servidor respondió correctamente a /status');
-          return true;
-        }
-      } catch (statusError) {
-        console.log('Error con endpoint /status, probando alternativa:', statusError);
-      }
-      
-      // Si /status falla, intentar con endpoint de credenciales de prueba
-      const testUrl = 'http://localhost:8080/get-credentials?sitio=test';
-      console.log('Probando endpoint credenciales:', testUrl);
-      
-      const response = await fetch(testUrl, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-        mode: 'cors'
-      });
-      
-      console.log('Respuesta recibida:', response);
-      
-      if (response.status === 404) {
-        console.log('Servidor respondió con 404 - Esto es esperado para el sitio de prueba');
-        return true;
-      } else if (response.ok) {
-        console.log('Servidor respondió correctamente');
-        return true;
-      } else {
-        console.log('Servidor respondió con estado:', response.status);
-        return false;
-      }
-    } catch (error) {
-      console.error('Error al comprobar la conexión:', error);
-      return false;
-    }
   }
   
   // Función para mostrar mensajes de estado
@@ -822,91 +859,77 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
   
-  // Función para buscar credenciales en varios endpoints
+  // Función para buscar credenciales con múltiples endpoints
   async function searchCredentialsWithEndpoints(searchTerm) {
-    console.log(`Buscando credenciales para: ${searchTerm}`);
-    
-    // Definir diferentes endpoints para intentar
-    const endpoints = [
-      // Endpoint principal: búsqueda por sitio
-      {
-        url: `http://localhost:8080/get-credentials?sitio=${encodeURIComponent(searchTerm)}`,
-        method: 'GET'
-      },
-      // Endpoint alternativo: podría ser una API de búsqueda (si existe)
-      {
-        url: `http://localhost:8080/api/search`,
-        method: 'POST',
-        body: JSON.stringify({ term: searchTerm }),
-        headers: { 'Content-Type': 'application/json' }
+    try {
+      showLoader(true);
+      
+      if (!searchTerm) {
+        showStatus('Por favor ingrese un sitio para buscar', 'warning');
+        showLoader(false);
+        return [];
       }
-    ];
-    
-    let lastError = null;
-    
-    // Intentar cada endpoint hasta encontrar uno que funcione
-    for (const endpoint of endpoints) {
-      try {
-        console.log(`Intentando con endpoint: ${endpoint.url}`);
-        
-        const fetchOptions = {
-          method: endpoint.method,
-          headers: endpoint.headers || { 'Content-Type': 'application/json' },
-          mode: 'cors'
-        };
-        
-        // Añadir body si es POST
-        if (endpoint.method === 'POST' && endpoint.body) {
-          fetchOptions.body = endpoint.body;
-        }
-        
-        const response = await fetch(endpoint.url, fetchOptions);
-        
-        console.log(`Respuesta del servidor: ${response.status} ${response.statusText}`);
-        
-        if (response.ok) {
-          const data = await response.json();
-          console.log('Datos recibidos:', data);
-          
-          // Verificar formato de los datos y extraer credenciales
-          if (data.credenciales && Array.isArray(data.credenciales)) {
-            console.log(`Se encontraron ${data.credenciales.length} credenciales en formato estándar`);
-            return data.credenciales;
-          } else if (Array.isArray(data)) {
-            console.log(`Se encontraron ${data.length} credenciales en formato array`);
-            return data;
-          } else if (data.items && Array.isArray(data.items)) {
-            console.log(`Se encontraron ${data.items.length} credenciales en formato items`);
-            return data.items;
-          } else {
-            console.log('Respuesta con formato desconocido:', data);
-            // Continuar con el siguiente endpoint
-          }
-        } else if (response.status === 404) {
-          console.log('No se encontraron credenciales (404)');
-          // Solo continuar si es el primer endpoint
-          if (endpoint === endpoints[0]) {
-            lastError = 'No se encontraron credenciales para este sitio';
-          } else {
-            return []; // Si es otro endpoint, ya sabemos que no hay credenciales
-          }
-        } else {
-          console.log(`Error del servidor: ${response.status}`);
-          lastError = `Error del servidor: ${response.status}`;
-          // Continuar con el siguiente endpoint
-        }
-      } catch (error) {
-        console.error(`Error al buscar credenciales en ${endpoint.url}:`, error);
-        lastError = error.message;
-        // Continuar con el siguiente endpoint
+      
+      // Verificar conexión con Firebase primero
+      const isConnected = await testServerConnection();
+      if (!isConnected) {
+        showStatus('No conectado a Firebase - Inicie sesión primero', 'warning');
+        showLoader(false);
+        return [];
       }
+      
+      console.log(`Buscando credenciales para: ${searchTerm}`);
+      
+      // Usar Firebase para obtener credenciales
+      return new Promise((resolve) => {
+        chrome.runtime.sendMessage(
+          { 
+            action: 'get_credentials', 
+            sitio: searchTerm 
+          },
+          (response) => {
+            showLoader(false);
+            
+            // Log completo de la respuesta para diagnóstico
+            console.log('Respuesta completa de get_credentials:', response);
+            
+            // Verificar la estructura de la respuesta y extraer las credenciales
+            if (response && response.success) {
+              // Manejar múltiples posibilidades de nombres de propiedades
+              const credencialesArray = response.credentials || response.credenciales || [];
+              
+              // Asegurar formato consistente para todas las credenciales
+              const credencialesNormalizadas = credencialesArray.map(cred => ({
+                id: cred.id || `cred_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                sitio: cred.sitio || cred.site || cred.dominio || cred.domain || '',
+                usuario: cred.usuario || cred.username || cred.email || '',
+                contraseña: cred.contraseña || cred.password || cred.pass || '',
+                // Asegurar que tengamos ambas propiedades para compatibilidad
+                password: cred.contraseña || cred.password || cred.pass || '',
+                email: cred.email || cred.usuario || cred.username || ''
+              }));
+              
+              console.log('Credenciales normalizadas:', credencialesNormalizadas.map(c => ({
+                sitio: c.sitio,
+                usuario: c.usuario,
+                tieneContraseña: !!c.contraseña
+              })));
+              
+              showStatus(`Se encontraron ${credencialesNormalizadas.length} credenciales`, 'success');
+              resolve(credencialesNormalizadas);
+            } else {
+              console.log('No se encontraron credenciales o hubo un error:', response);
+              showStatus(response?.message || 'No se encontraron credenciales', 'warning');
+              resolve([]);
+            }
+          }
+        );
+      });
+    } catch (error) {
+      console.error('Error al buscar credenciales:', error);
+      showStatus(`Error al buscar: ${error.message}`, 'error');
+      showLoader(false);
+      return [];
     }
-    
-    // Si llegamos aquí, ningún endpoint funcionó
-    if (lastError) {
-      console.error('Error al buscar credenciales:', lastError);
-    }
-    
-    return []; // Devolver array vacío si no se encontraron credenciales
   }
 });

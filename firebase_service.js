@@ -1,27 +1,29 @@
+// Importaciones de módulos ES6 para Firebase
+import './firebase/firebase-app-compat.js';
+import './firebase/firebase-auth-compat.js';
+import './firebase/firebase-firestore-compat.js';
+
 // Asegúrate de que este archivo también está correctamente creado
 try {
   // Cargar scripts de Firebase de forma más robusta
   function loadFirebaseScripts() {
     try {
-      // Usar rutas absolutas con chrome.runtime.getURL para evitar problemas de importación
-      const appScriptUrl = chrome.runtime.getURL('firebase/firebase-app-compat.js');
-      const authScriptUrl = chrome.runtime.getURL('firebase/firebase-auth-compat.js');
-      const firestoreScriptUrl = chrome.runtime.getURL('firebase/firebase-firestore-compat.js');
-      
-      // Usar importScripts con las rutas absolutas
-      importScripts(appScriptUrl);
-      importScripts(authScriptUrl);
-      importScripts(firestoreScriptUrl);
-      
-      console.log('Firebase scripts cargados correctamente');
-      return true;
+      // En un módulo ES6, las importaciones deben estar al inicio del archivo
+      // Las importaciones ya están arriba, así que solo verificamos que Firebase esté disponible
+      if (typeof firebase !== 'undefined' && firebase.apps) {
+        console.log('Firebase cargado correctamente a través de importaciones ES6');
+        return true;
+      } else {
+        console.error('Firebase no está disponible a pesar de las importaciones');
+        return false;
+      }
     } catch (e) {
       console.error('Error al cargar scripts de Firebase:', e);
       return false;
     }
   }
 
-  // Intentar cargar los scripts
+  // Intentar verificar que Firebase esté disponible
   const scriptsLoaded = loadFirebaseScripts();
   if (!scriptsLoaded) {
     console.warn('No se pudieron cargar los scripts de Firebase, algunas funcionalidades no estarán disponibles');
@@ -56,32 +58,135 @@ class FirebaseService {
         return;
       }
       
+      // Detectar si estamos en un Service Worker
+      const isServiceWorker = (typeof window === 'undefined' && typeof self !== 'undefined');
+      console.log(`Ejecutando en ${isServiceWorker ? 'Service Worker' : 'Contexto de ventana'}`);
+      
+      // Configurar la persistencia antes de inicializar Firebase - solo si no estamos en un Service Worker
+      if (!isServiceWorker) {
+        try {
+          // Establecer persistencia local para mantener la sesión incluso cuando la app web esté cerrada
+          firebase.auth.Auth.Persistence.LOCAL;
+          console.log('Persistencia local configurada para Firebase Auth');
+        } catch (persistenceError) {
+          console.warn('No se pudo configurar la persistencia:', persistenceError);
+        }
+      } else {
+        console.log('Omitiendo configuración de persistencia en Service Worker');
+      }
+      
       if (!firebase.apps.length) {
         firebase.initializeApp(this.firebaseConfig);
       }
       
       console.log('Firebase inicializado correctamente desde FirebaseService');
       this.auth = firebase.auth();
+      
+      // Configurar persistencia para la autenticación - solo si no estamos en un Service Worker
+      if (!isServiceWorker) {
+        this.auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)
+          .then(() => {
+            console.log('Persistencia configurada para mantener sesión activa');
+          })
+          .catch(error => {
+            console.error('Error al configurar persistencia:', error);
+          });
+      }
+      
       this.db = firebase.firestore();
+      
+      // Habilitar caché offline para Firestore - solo si no estamos en un Service Worker
+      if (!isServiceWorker) {
+        this.db.enablePersistence({synchronizeTabs: true})
+          .then(() => {
+            console.log('Persistencia de Firestore habilitada para funcionamiento offline');
+          })
+          .catch(error => {
+            if (error.code === 'failed-precondition') {
+              console.warn('La persistencia de Firestore no pudo habilitarse. Posiblemente hay múltiples pestañas abiertas.');
+            } else if (error.code === 'unimplemented') {
+              console.warn('El navegador actual no soporta persistencia de Firestore');
+            } else {
+              console.error('Error al configurar persistencia de Firestore:', error);
+            }
+          });
+      } else {
+        console.log('Omitiendo configuración de persistencia de Firestore en Service Worker');
+      }
+      
       this.firebaseAvailable = true;
+      
+      // Inicializar un evento para detectar cambios en el estado de autenticación
+      this.auth.onAuthStateChanged(user => {
+        if (user) {
+          console.log(`Usuario autenticado detectado: ${user.email} (${user.uid})`);
+          // Guardar en chrome.storage que el usuario está autenticado
+          chrome.storage.local.set({ userAuthenticated: true, userEmail: user.email });
+        } else {
+          console.log('No hay usuario autenticado');
+          chrome.storage.local.set({ userAuthenticated: false, userEmail: null });
+        }
+      });
     } catch (e) {
       console.error('Error al inicializar Firebase:', e);
       this.firebaseAvailable = false;
     }
   }
   
-  // Obtener usuario actual
+  // Obtener usuario actual con reintento
   getCurrentUser() {
     if (!this.firebaseAvailable) return null;
-    return this.auth ? this.auth.currentUser : null;
+    
+    return new Promise((resolve) => {
+      // Verificar si el usuario ya está disponible
+      const user = this.auth ? this.auth.currentUser : null;
+      if (user) {
+        resolve(user);
+        return;
+      }
+      
+      // Si no hay usuario, esperar brevemente por si está cargando
+      let intentos = 0;
+      const maxIntentos = 5;
+      
+      const verificarUsuario = () => {
+        intentos++;
+        const user = this.auth ? this.auth.currentUser : null;
+        
+        if (user) {
+          resolve(user);
+        } else if (intentos < maxIntentos) {
+          // Esperar y volver a intentar
+          setTimeout(verificarUsuario, 300);
+        } else {
+          // Se agotaron los intentos
+          resolve(null);
+        }
+      };
+      
+      verificarUsuario();
+    });
   }
   
   // Verificar si hay usuario autenticado
-  isUserAuthenticated() {
+  async isUserAuthenticated() {
     try {
       if (!this.firebaseAvailable) return false;
-      const user = this.auth ? this.auth.currentUser : null;
-      return user !== null;
+      
+      // Primero verificar en chrome.storage
+      return new Promise((resolve) => {
+        chrome.storage.local.get('userAuthenticated', async (data) => {
+          if (data.userAuthenticated) {
+            // Verificar si el token aún es válido obteniendo el usuario actual
+            const user = await this.getCurrentUser();
+            resolve(user !== null);
+          } else {
+            // No hay información en storage, verificar con Firebase directamente
+            const user = await this.getCurrentUser();
+            resolve(user !== null);
+          }
+        });
+      });
     } catch (e) {
       console.error('Error al verificar autenticación:', e);
       return false;
@@ -89,9 +194,10 @@ class FirebaseService {
   }
   
   // Obtener ID del usuario
-  getUserId() {
+  async getUserId() {
     if (!this.firebaseAvailable) return null;
-    const user = this.auth ? this.auth.currentUser : null;
+    
+    const user = await this.getCurrentUser();
     return user ? user.uid : null;
   }
   
@@ -101,7 +207,15 @@ class FirebaseService {
       if (!this.firebaseAvailable) {
         return { success: false, error: 'Firebase no disponible' };
       }
+      
+      // Limpia el almacenamiento local antes de cerrar sesión
+      chrome.storage.local.set({ 
+        userAuthenticated: false, 
+        userEmail: null 
+      });
+      
       await this.auth.signOut();
+      console.log('Sesión cerrada y datos de autenticación limpiados');
       return { success: true };
     } catch (error) {
       console.error('Error al cerrar sesión:', error);
@@ -109,107 +223,136 @@ class FirebaseService {
     }
   }
   
-  // Guardar credenciales en Firebase
-  async saveCredential(credential) {
+  // Guardar credenciales - Acepta tanto un objeto credencial como parámetros individuales
+  async saveCredential(credencial) {
     try {
-      console.log('SaveCredential llamado con:', {
-        sitio: credential.sitio,
-        usuario: credential.usuario,
-        contraseña: credential.contraseña ? 'presente' : 'ausente'
-      });
+      console.log('Iniciando guardado de credencial en Firebase');
       
       if (!this.firebaseAvailable) {
-        console.error('Firebase no disponible al intentar guardar credencial');
-        return { success: false, error: 'Firebase no disponible. La contraseña no se puede guardar.' };
+        console.error('Firebase no disponible al guardar credencial');
+        throw new Error('Firebase no está disponible');
       }
       
       if (!this.auth) {
-        console.error('Auth de Firebase no disponible');
-        return { success: false, error: 'Servicio de autenticación no disponible' };
+        console.error('Auth no disponible al guardar credencial');
+        throw new Error('No se puede acceder a la autenticación');
       }
       
-      const user = this.auth.currentUser;
-      console.log('Usuario actual:', user ? user.uid : 'No autenticado');
-      
+      const user = await this.getCurrentUser();
       if (!user) {
         console.error('Usuario no autenticado en saveCredential');
-        return { success: false, error: 'Usuario no autenticado' };
+        throw new Error('Usuario no autenticado');
       }
       
-      // Verificar que tenemos todos los campos necesarios
-      if (!credential.sitio || !credential.usuario || !credential.contraseña) {
-        console.error('Faltan campos obligatorios en saveCredential');
-        const camposFaltantes = [];
-        if (!credential.sitio) camposFaltantes.push('sitio');
-        if (!credential.usuario) camposFaltantes.push('usuario');
-        if (!credential.contraseña) camposFaltantes.push('contraseña');
-        
-        return { 
-          success: false, 
-          error: `Faltan campos obligatorios: ${camposFaltantes.join(', ')}`
-        };
+      // Extraer los valores del objeto credencial o usar los parámetros individuales
+      let sitio, usuario, contraseña;
+      
+      if (typeof credencial === 'object' && credencial !== null) {
+        // Si se pasó un objeto credencial
+        sitio = credencial.sitio;
+        usuario = credencial.usuario;
+        contraseña = credencial.contraseña;
+      } else {
+        // Si se usó el formato antiguo con parámetros separados
+        console.warn('Uso obsoleto: saveCredential debería recibir un objeto credencial');
+        return { error: 'Formato incorrecto: saveCredential requiere un objeto credencial' };
       }
       
-      // Log para identificar la estructura de la BD
-      console.log(`Guardando en Firestore: usuarios/${user.uid}/pass/[nuevo-documento]`);
+      // Validar campos requeridos
+      if (!sitio || !usuario || !contraseña) {
+        console.error('Faltan campos obligatorios para guardar credencial');
+        throw new Error('Todos los campos son obligatorios: sitio, usuario y contraseña');
+      }
 
-      // Crear objeto limpio para guardar
-      const dataToSave = {
-        sitio: credential.sitio,
-        usuario: credential.usuario,
-        contraseña: credential.contraseña,
-        fechaCreacion: firebase.firestore.FieldValue.serverTimestamp()
+      console.log(`Guardando credencial para el sitio: ${sitio}, usuario: ${usuario}`);
+      console.log(`Usuario autenticado: ${user.email} (${user.uid})`);
+      console.log('Guardando en la estructura: usuarios/{userId}/pass/{documentId}');
+      
+      // Crear objeto con datos normalizados
+      const credencialData = {
+        sitio: sitio,
+        usuario: usuario,
+        contraseña: contraseña,
+        fechaCreacion: new Date().toISOString(),
+        userId: user.uid // Guardamos referencia al userId para consultas futuras
       };
+
+      // Guardamos en la estructura correcta según reglas de Firebase
+      const resultado = await this.db.collection('usuarios')
+        .doc(user.uid)
+        .collection('pass')
+        .add(credencialData);
       
-      console.log('Estructura de datos a guardar:', Object.keys(dataToSave));
-      
-      // Usar la estructura correcta según las reglas de Firestore:
-      // /usuarios/{userId}/pass/{documentId}
-      const docRef = await this.db.collection('usuarios').doc(user.uid).collection('pass').add(dataToSave);
-      
-      console.log('Credencial guardada con ID:', docRef.id);
-      return { success: true, id: docRef.id };
+      console.log(`✅ Credencial guardada exitosamente con ID: ${resultado.id}`);
+      return {
+        id: resultado.id,
+        ...credencialData
+      };
     } catch (error) {
-      console.error('Error detallado al guardar credencial en Firebase:', error);
-      // Verificar si es un error de permisos
+      console.error('Error al guardar credencial:', error);
+      
       if (error.code === 'permission-denied') {
-        console.error('Error de permisos al guardar credencial');
-        return { 
-          success: false, 
-          error: 'permission-denied: No tienes permisos para guardar en esta ubicación. Verifica la configuración de reglas de Firestore.' 
-        };
+        console.error('Error de permisos en Firestore. Verifica las reglas de seguridad.');
+        throw new Error('Error de permisos: No puedes guardar credenciales con las reglas actuales');
       }
-      return { success: false, error: error.message || 'Error desconocido al guardar' };
+      
+      throw error;
     }
   }
   
   // Obtener todas las credenciales del usuario
   async getAllCredentials() {
     try {
-      const user = this.auth.currentUser;
-      if (!user) {
-        throw new Error('Usuario no autenticado');
+      console.log('Obteniendo todas las credenciales del usuario desde Firebase');
+
+      if (!this.firebaseAvailable) {
+        console.error('Firebase no disponible al obtener credenciales');
+        return [];
       }
+
+      if (!this.auth) {
+        console.error('Auth no disponible al obtener credenciales');
+        return [];
+      }
+
+      const user = await this.getCurrentUser();
+      if (!user) {
+        console.error('Usuario no autenticado en getAllCredentials');
+        return [];
+      }
+
+      console.log(`Consultando credenciales para usuario: ${user.email} (${user.uid})`);
+      console.log('Consultando estructura: usuarios/{userId}/pass/{documentId}');
       
-      // Usar la estructura correcta según las reglas: /usuarios/{userId}/pass
-      const snapshot = await this.db.collection('usuarios').doc(user.uid).collection('pass').get();
+      // Obtenemos directamente de la estructura correcta
+      const snapshot = await this.db.collection('usuarios')
+        .doc(user.uid)
+        .collection('pass')
+        .get();
+        
+      if (snapshot.empty) {
+        console.log('No se encontraron credenciales para este usuario');
+        return [];
+      }
       
       const credenciales = [];
       snapshot.forEach(doc => {
-        const data = doc.data();
         credenciales.push({
           id: doc.id,
-          sitio: data.sitio,
-          usuario: data.usuario,
-          password: data.contraseña, // Nota: Cambiamos el nombre para mantener compatibilidad
-          fechaCreacion: data.fechaCreacion
+          ...doc.data()
         });
       });
       
-      console.log(`Se encontraron ${credenciales.length} credenciales para el usuario ${user.email}`);
+      console.log(`Se encontraron ${credenciales.length} credenciales para el usuario`);
       return credenciales;
     } catch (error) {
-      console.error('Error al obtener credenciales de Firebase:', error);
+      console.error('Error al obtener credenciales:', error);
+      
+      if (error.code === 'permission-denied') {
+        console.error('Error de permisos en Firestore. Verifica las reglas de seguridad.');
+        return [];
+      }
+      
       return [];
     }
   }
@@ -249,7 +392,55 @@ class FirebaseService {
       return { success: false, error: error.message };
     }
   }
+  
+  // Registrar nuevo usuario con email y contraseña
+  async registerUser(email, password) {
+    try {
+      if (!this.firebaseAvailable) {
+        return { success: false, error: 'Firebase no disponible' };
+      }
+      
+      console.log(`Intentando registrar nuevo usuario: ${email}`);
+      const userCredential = await this.auth.createUserWithEmailAndPassword(email, password);
+      console.log('Usuario registrado:', userCredential.user.email);
+      
+      // Crear la colección inicial para este usuario
+      const userId = userCredential.user.uid;
+      
+      // Crear documento del usuario con información básica
+      await this.db.collection('usuarios').doc(userId).set({
+        email: email,
+        fechaCreacion: firebase.firestore.FieldValue.serverTimestamp(),
+        ultimoAcceso: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      
+      // Crear la colección de contraseñas vacía (no es necesario crear documentos)
+      console.log(`Inicializada estructura de datos para usuario: ${userId}`);
+      
+      return { success: true, user: userCredential.user };
+    } catch (error) {
+      console.error('Error al registrar usuario:', error);
+      
+      // Mensajes más amigables para errores comunes
+      let errorMessage = error.message;
+      if (error.code === 'auth/email-already-in-use') {
+        errorMessage = 'Este correo electrónico ya está registrado. Intenta iniciar sesión.';
+      } else if (error.code === 'auth/weak-password') {
+        errorMessage = 'La contraseña es demasiado débil. Debe tener al menos 6 caracteres.';
+      } else if (error.code === 'auth/invalid-email') {
+        errorMessage = 'El formato del correo electrónico no es válido.';
+      }
+      
+      return { success: false, error: errorMessage, code: error.code };
+    }
+  }
 }
 
 // Crear instancia global para usar en otros scripts
 const firebaseService = new FirebaseService();
+
+// Exportar FirebaseService como un módulo ES6
+export { FirebaseService, firebaseService };
+
+// Asegurar que la variable global también está disponible
+self.firebaseService = firebaseService;

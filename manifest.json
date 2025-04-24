@@ -52,6 +52,6 @@
       }
     ],
     "content_security_policy": {
-      "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http://localhost:8080 https://*.firebaseio.com https://*.firebase.googleapis.com https://identitytoolkit.googleapis.com"
+      "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http://localhost:8080 https://*.firebaseio.com https://*.firebase.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://*.googleapis.com"
     }
   }

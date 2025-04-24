@@ -92,207 +92,254 @@ function addStyleSafely() {
       // Crear el elemento style
       const style = document.createElement('style');
       style.textContent = `
+        /* Animaciones base */
+        @keyframes passwd-fade-in {
+          from { opacity: 0; transform: translateY(-10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        
+        @keyframes passwd-fade-out {
+          from { opacity: 1; transform: translateY(0); }
+          to { opacity: 0; transform: translateY(-10px); }
+        }
+        
+        @keyframes passwd-pulse {
+          0% { transform: scale(1); }
+          50% { transform: scale(1.08); }
+          100% { transform: scale(1); }
+        }
+        
+        @keyframes passwd-shine {
+          0% { background-position: 200% center; }
+          100% { background-position: -200% center; }
+        }
+        
+        @keyframes passwd-rotate {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        
+        /* Estilos del menú desplegable */
         .passwd-dropdown {
           position: absolute;
           width: 350px;
           max-height: 400px;
           overflow-y: auto;
-          background-color: #212121;
-          border: 1px solid #444;
-          border-radius: 8px;
-          box-shadow: 0 8px 25px rgba(0,0,0,0.6);
+          background-color: rgba(20, 20, 20, 0.95);
+          border: none;
+          border-radius: 12px;
+          box-shadow: 0 5px 30px rgba(0,0,0,0.5), 0 0 0 1px rgba(128, 0, 255, 0.2);
           z-index: 999999;
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+          font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', sans-serif;
           color: #fff;
-          animation: passwd-fade-in 0.3s ease-out;
+          animation: passwd-fade-in 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
           padding-bottom: 8px;
+          backdrop-filter: blur(20px);
         }
         
-        @keyframes passwd-fade-in {
-          from { opacity: 0; transform: translateY(-10px); }
-          to { opacity: 1; transform: translateY(0); }
+        /* Estilos específicos para el dropdown de credenciales */
+        .passwd-credentials-dropdown {
+          position: absolute;
+          top: 100px;
+          left: 100px;
+          min-width: 280px;
+          max-width: 350px;
+          background-color: rgba(20, 20, 20, 0.95);
+          color: #fff;
+          border-radius: 12px;
+          box-shadow: 0 5px 20px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(128, 0, 255, 0.2);
+          z-index: 99999999;
+          font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', sans-serif;
+          padding: 0;
+          border: none;
+          backdrop-filter: blur(20px);
+          -webkit-backdrop-filter: blur(20px);
+          transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+          overflow: hidden;
+        }
+        
+        .passwd-credentials-dropdown.passwd-dropdown-visible {
+          display: block;
+          opacity: 1;
+          transform: translateY(0);
+        }
+        
+        .passwd-dropdown-title {
+          font-weight: 600;
+          padding: 12px 16px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+          margin-bottom: 0;
+          font-size: 15px;
+          color: #fff;
+          background-color: rgba(128, 0, 255, 0.2);
+          letter-spacing: -0.2px;
+        }
+        
+        .passwd-credentials-container {
+          padding: 8px;
+        }
+        
+        .passwd-credential-item {
+          padding: 10px 12px;
+          margin-bottom: 8px;
+          border-radius: 8px;
+          background-color: rgba(40, 40, 40, 0.8);
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          transition: all 0.2s ease;
+          border: 1px solid rgba(128, 0, 255, 0.1);
+        }
+        
+        .passwd-credential-item:hover {
+          background-color: rgba(50, 50, 50, 1);
+          transform: translateY(-1px);
+          box-shadow: 0 2px 5px rgba(128, 0, 255, 0.2);
+          border-color: rgba(128, 0, 255, 0.3);
+        }
+        
+        .passwd-credential-user {
+          flex-grow: 1;
+          padding-right: 10px;
+          font-size: 14px;
+          color: #fff;
+          font-weight: 500;
+        }
+        
+        .passwd-credential-actions {
+          display: flex;
+        }
+        
+        .passwd-fill-button {
+          background: linear-gradient(135deg, #6a11cb, #8a3bd8);
+          color: white;
+          border: none;
+          border-radius: 6px;
+          padding: 6px 12px;
+          cursor: pointer;
+          font-size: 13px;
+          font-weight: 500;
+          letter-spacing: -0.01em;
+          transition: all 0.2s ease;
+        }
+        
+        .passwd-fill-button:hover {
+          background: linear-gradient(135deg, #7b21dc, #9b4ce9);
+          transform: scale(1.03);
+          box-shadow: 0 2px 8px rgba(128, 0, 255, 0.3);
+        }
+        
+        .passwd-fill-button:active {
+          background: linear-gradient(135deg, #5a01bb, #7a2bc8);
+          transform: scale(0.98);
+        }
+        
+        .passwd-credential-error {
+          color: #ff75c3;
+          padding: 12px;
+          text-align: center;
+          font-style: normal;
+          font-size: 13px;
+          font-weight: 400;
+          background-color: rgba(255, 59, 148, 0.1);
+          border-radius: 8px;
+          margin: 8px;
+        }
+        
+        .passwd-dropdown.closing {
+          animation: passwd-fade-out 0.2s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
         }
       
         .passwd-dropdown::-webkit-scrollbar {
-          width: 8px;
-          height: 8px;
+          width: 6px;
+          height: 6px;
         }
         
         .passwd-dropdown::-webkit-scrollbar-track {
-          background: #333;
+          background: rgba(30, 30, 30, 0.8);
           border-radius: 8px;
         }
         
         .passwd-dropdown::-webkit-scrollbar-thumb {
-          background-color: #555;
+          background-color: rgba(128, 0, 255, 0.5);
           border-radius: 8px;
+          transition: all 0.3s ease;
         }
         
+        .passwd-dropdown::-webkit-scrollbar-thumb:hover {
+          background-color: rgba(128, 0, 255, 0.7);
+        }
+        
+        /* Encabezado del menú */
         .passwd-dropdown-header {
           display: flex;
           align-items: center;
           padding: 16px;
-          background-color: #333;
-          border-bottom: 1px solid #444;
-          border-radius: 8px 8px 0 0;
-          margin-bottom: 8px;
+          background: linear-gradient(135deg, #2b1331, #5a1b96);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 12px 12px 0 0;
+          margin-bottom: 0;
         }
         
         .passwd-dropdown-header svg {
           margin-right: 10px;
           border-radius: 50%;
-          background-color: #4285F4;
+          background-color: rgba(255, 255, 255, 0.2);
           padding: 3px;
           min-width: 18px;
+          transition: transform 0.3s ease;
+          color: rgba(255, 255, 255, 0.9);
         }
         
         .passwd-dropdown-header span {
           font-weight: 600;
           color: #fff;
           font-size: 14px;
-          letter-spacing: 0.5px;
+          letter-spacing: -0.2px;
         }
         
-        .passwd-dropdown-item {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 12px 16px;
-          margin: 0 8px 8px 8px;
-          border-radius: 6px;
-          cursor: pointer;
-          transition: all 0.2s ease;
-          background-color: #333;
-          border: 1px solid #444;
-        }
-        
-        .passwd-dropdown-item:hover {
-          background-color: #3a3a3a;
-          transform: translateY(-2px);
-          box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-        }
-        
-        .passwd-dropdown-item-info {
-          flex-grow: 1;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-        
-        .passwd-dropdown-item-username {
-          font-weight: 500;
-          font-size: 14px;
-          color: #fff;
-          margin-bottom: 3px;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-        
-        .passwd-dropdown-item-site {
-          font-size: 12px;
-          color: #aaa;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-        
-        .passwd-dropdown-item .use-button {
-          background-color: #4285F4;
-          color: white;
-          border: none;
-          border-radius: 4px;
-          padding: 8px 12px;
-          font-size: 12px;
-          font-weight: 600;
-          cursor: pointer;
-          transition: all 0.2s ease;
-          margin-left: 10px;
-          text-transform: uppercase;
-          letter-spacing: 0.5px;
-        }
-        
-        .passwd-dropdown-item .use-button:hover {
-          background-color: #5294FF;
-          transform: scale(1.05);
-          box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-        }
-        
-        .passwd-error-message {
-          display: flex;
-          align-items: center;
-          padding: 16px;
-          color: #e86363;
-          font-size: 14px;
-          text-align: center;
-          margin: 0 8px 8px 8px;
-          background-color: #3e0d0d;
-          border-radius: 6px;
-          border: 1px solid #6b1010;
-        }
-        
-        .passwd-error-message svg {
-          margin-right: 10px;
-          min-width: 20px;
-          flex-shrink: 0;
-        }
-        
-        .passwd-error-message span {
-          flex: 1;
-        }
-        
+        /* Icono del botón flotante */
         .passwd-logo-hint {
-          position: fixed !important;
-          width: 24px !important;
-          height: 24px !important;
-          background-color: #212121 !important;
-          border-radius: 50% !important;
-          cursor: pointer !important;
-          z-index: 999998 !important;
-          display: flex !important;
-          align-items: center !important;
-          justify-content: center !important;
-          font-weight: bold !important;
-          color: #fff !important;
-          border: 1px solid #444 !important;
-          font-size: 13px !important;
-          transition: all 0.2s ease !important;
-          box-shadow: 0 2px 5px rgba(0,0,0,0.3) !important;
+          position: absolute;
+          width: 28px;
+          height: 28px;
+          background: linear-gradient(135deg, #4285F4, #34A853);
+          color: white;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-weight: bold;
+          z-index: 9999;
+          cursor: pointer;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+          border: 2px solid rgba(255, 255, 255, 0.8);
+          transition: all 0.2s ease;
+          user-select: none;
         }
         
         .passwd-logo-hint:hover {
-          background-color: #4285F4 !important;
-          transform: scale(1.1) !important;
-          box-shadow: 0 3px 8px rgba(0,0,0,0.4) !important;
-        }`;
+          transform: scale(1.1);
+          box-shadow: 0 3px 10px rgba(0, 0, 0, 0.6);
+        }
+        
+        .passwd-logo-hint.active {
+          background: linear-gradient(135deg, #EA4335, #FBBC05);
+          animation: passwd-pulse 0.5s infinite;
+        }
+      `;
 
-      // Intentar añadir al head si está disponible
-      if (document.head) {
         document.head.appendChild(style);
         estilosAñadidos = true;
-        logMessage('Estilos añadidos correctamente al head');
-      }
-      // Si no hay head, intentar añadir al documentElement
-      else if (document.documentElement) {
-        document.documentElement.appendChild(style);
-        estilosAñadidos = true;
-        logMessage('Estilos añadidos correctamente al documentElement');
-      }
-      // Si aún no se puede, reintentar
-      else if (intento < maxIntentos) {
-        logMessage(`No se pudo añadir estilos, reintentando (intento ${intento + 1}/${maxIntentos})...`);
-        setTimeout(() => intentarAñadirEstilos(intento + 1), 500);
-      } else {
-        logMessage('No se pudieron añadir los estilos después de múltiples intentos', 'error');
-      }
+      console.log('Estilos de PASSWD añadidos correctamente');
     } catch (e) {
-      logMessage(`Error al añadir estilos: ${e}`, 'error');
+      console.error('Error al añadir estilos:', e);
       if (intento < maxIntentos) {
         setTimeout(() => intentarAñadirEstilos(intento + 1), 500);
       }
     }
   };
 
-  // Iniciar el proceso de añadir estilos
   intentarAñadirEstilos();
 }
 
@@ -369,188 +416,183 @@ function rellenarFormulario(datos) {
   }
 }
 
-// Función para mostrar el desplegable de credenciales con mejor diseño
-function mostrarDesplegableCredenciales(credenciales, inputElement, mensajeError = null) {
+// Función para mostrar el desplegable de credenciales
+function mostrarDesplegableCredenciales(targetElement, credenciales = null, mensajeError = null) {
   try {
-    // Verificar que tenemos credenciales válidas o un mensaje de error
-    if (!mensajeError && (!credenciales || !Array.isArray(credenciales) || credenciales.length === 0)) {
-      mensajeError = 'No se encontraron credenciales para este sitio';
+    // Si se proporcionan credenciales, actualizar la variable global
+    if (credenciales) {
+      credencialesDisponibles = credenciales;
     }
-    
-    logMessage(`Mostrando desplegable${mensajeError ? ' con error' : ` con ${credenciales.length} credenciales`}`);
-    
-    // Si ya hay un desplegable, eliminarlo primero
-    try {
-      const desplegableExistente = document.querySelector('.passwd-dropdown');
-      if (desplegableExistente) {
-        desplegableExistente.remove();
-        desplegableVisible = false;
-      }
-    } catch (e) {
-      logMessage(`Error al eliminar desplegable existente: ${e}`, 'warn');
+
+    // Asegurar que los estilos estén añadidos
+    if (!estilosAñadidos) {
+      addStyleSafely();
     }
+
+    // Eliminar cualquier desplegable existente
+    const existingDropdown = document.getElementById('passwd-credentials-dropdown');
+    if (existingDropdown) {
+      existingDropdown.remove();
+    }
+
+    // Crear el nuevo desplegable
+    const dropdown = document.createElement('div');
+    dropdown.id = 'passwd-credentials-dropdown';
+    dropdown.className = 'passwd-credentials-dropdown';
+
+    // Añadir encabezado con icono
+    const header = document.createElement('div');
+    header.className = 'passwd-dropdown-header';
     
-    try {
-      // Crear el desplegable
-      const desplegable = document.createElement('div');
-      desplegable.className = 'passwd-dropdown';
+    // Icono de llave (SVG)
+    const iconSvg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#bb86fc" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0 0 3px rgba(187, 134, 252, 0.5));">
+        <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path>
+      </svg>
+    `;
+    
+    // Título con icono
+    header.innerHTML = `${iconSvg}<span>Contraseñas guardadas</span>`;
+    dropdown.appendChild(header);
+
+    // Contenedor para las credenciales
+    const credentialsContainer = document.createElement('div');
+    credentialsContainer.className = 'passwd-credentials-container';
+
+    // Si hay un mensaje de error o no hay credenciales disponibles, mostrar mensaje
+    if (mensajeError || !credencialesDisponibles || credencialesDisponibles.length === 0) {
+      const mensaje = mensajeError || 'No hay credenciales disponibles para mostrar';
+      logMessage(mensaje, 'warn', true);
       
-      // Añadir encabezado
-      const header = document.createElement('div');
-      header.className = 'passwd-dropdown-header';
+      // Añadir mensaje al desplegable
+      const errorMsg = document.createElement('div');
+      errorMsg.className = 'passwd-credential-error';
+      errorMsg.textContent = mensaje;
+      credentialsContainer.appendChild(errorMsg);
+    } else {
+      logMessage(`Mostrando desplegable con ${credencialesDisponibles.length} credenciales`, 'info', true);
       
-      // Logo como SVG embebido para evitar problemas de carga
-      header.innerHTML = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2">
-          <rect width="20" height="14" x="2" y="5" rx="2" />
-          <path d="M12 12a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" />
-          <path d="M12 12v3" />
-        </svg>
-        <span>PASSWD${!mensajeError ? `: ${credenciales.length} credenciales encontradas` : ''}</span>
-      `;
-      
-      desplegable.appendChild(header);
-      
-      // Si hay un mensaje de error, mostrarlo
-      if (mensajeError) {
-        const errorContainer = document.createElement('div');
-        errorContainer.className = 'passwd-error-message';
-        errorContainer.innerHTML = `
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#e86363" stroke-width="2">
-            <circle cx="12" cy="12" r="10"></circle>
-            <line x1="12" y1="8" x2="12" y2="12"></line>
-            <line x1="12" y1="16" x2="12.01" y2="16"></line>
-          </svg>
-          <span>${mensajeError}</span>
-        `;
-        desplegable.appendChild(errorContainer);
-      } else {
-        // Añadir cada credencial
-        credenciales.forEach(credencial => {
-          try {
-            const item = document.createElement('div');
-            item.className = 'passwd-dropdown-item';
-            
-            const info = document.createElement('div');
-            info.className = 'passwd-dropdown-item-info';
-            
-            const username = document.createElement('div');
-            username.className = 'passwd-dropdown-item-username';
-            username.textContent = credencial.usuario || 'Sin usuario';
-            
-            const site = document.createElement('div');
-            site.className = 'passwd-dropdown-item-site';
-            site.textContent = credencial.sitio || 'Sin sitio';
-            
-            info.appendChild(username);
-            info.appendChild(site);
-            
-            const useButton = document.createElement('button');
-            useButton.className = 'use-button';
-            useButton.textContent = 'Usar';
-            
-            // Función para rellenar y notificar
-            function rellenarYNotificar(credencial) {
-              try {
-                // Rellenar el formulario
-                const resultado = rellenarFormulario(credencial);
-                
-                // Eliminar el desplegable
-                desplegable.remove();
-                desplegableVisible = false;
-                
-                // Notificar al popup sobre el resultado
-                try {
-                  sendMessageSafely({
-                    action: 'form_filled',
-                    success: resultado
-                  }).catch(e => logMessage(`Error al enviar notificación de relleno: ${e}`, 'warn'));
-                } catch (e) {
-                  logMessage(`Error al notificar relleno de formulario: ${e}`, 'error');
-                }
-              } catch (e) {
-                logMessage(`Error al rellenar formulario: ${e}`, 'error');
-              }
-            }
-            
-            // Agregar eventos
-            useButton.addEventListener('click', (e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              rellenarYNotificar(credencial);
-            });
-            
-            item.addEventListener('click', (e) => {
-              if (e.target !== useButton) {
-                e.preventDefault();
-                e.stopPropagation();
-                rellenarYNotificar(credencial);
-              }
-            });
-            
-            item.appendChild(info);
-            item.appendChild(useButton);
-            desplegable.appendChild(item);
-          } catch (e) {
-            logMessage(`Error al crear ítem de credencial: ${e}`, 'error');
-          }
-        });
-      }
-      
-      try {
-        // Asegurarnos de que se han añadido los estilos
-        addStyleSafely();
+      // Realizar un log detallado de las credenciales disponibles para diagnóstico
+      credencialesDisponibles.forEach((cred, index) => {
+        // Log más detallado para diagnóstico
+        const tienePassword = !!(cred.contraseña || cred.password || cred.pass);
+        logMessage(`Credencial #${index}: usuario=${cred.usuario}, tiene contraseña=${tienePassword}`, 'info', true);
+      });
+
+      // Añadir cada credencial
+      credencialesDisponibles.forEach(credencial => {
+        const credItem = document.createElement('div');
+        credItem.className = 'passwd-credential-item';
         
-        // Añadir el desplegable al body
-        if (document.body) {
-          document.body.appendChild(desplegable);
-          desplegableVisible = true;
-          
-          // Posicionar el desplegable junto al campo de entrada
-          const inputRect = inputElement.getBoundingClientRect();
-          desplegable.style.top = (inputRect.top + window.scrollY + inputRect.height + 5) + 'px';
-          desplegable.style.left = (inputRect.left + window.scrollX) + 'px';
-          
-          // Asegurar que el desplegable sea visible en la ventana
-          setTimeout(() => {
-            const desplegableRect = desplegable.getBoundingClientRect();
-            
-            // Ajustar posición horizontal si se sale por la derecha
-            if (desplegableRect.right > window.innerWidth) {
-              const ajusteX = desplegableRect.right - window.innerWidth + 10;
-              desplegable.style.left = (parseInt(desplegable.style.left) - ajusteX) + 'px';
-            }
-            
-            // Ajustar posición vertical si se sale por abajo
-            if (desplegableRect.bottom > window.innerHeight) {
-              desplegable.style.top = (inputRect.top + window.scrollY - desplegableRect.height - 5) + 'px';
-            }
-          }, 0);
-          
-          // Cerrar el desplegable al hacer clic fuera
-          document.addEventListener('click', function cerrarDesplegable(e) {
-            if (!desplegable.contains(e.target) && e.target !== inputElement) {
-              try {
-                desplegable.remove();
-              } catch (e) {
-                logMessage(`Error al intentar eliminar el desplegable: ${e}`, 'warn');
-              }
-              document.removeEventListener('click', cerrarDesplegable);
-              desplegableVisible = false;
-            }
+        // Asegurar que existe un valor para mostrar como usuario
+        const usuarioDisplay = credencial.usuario || credencial.email || credencial.correo || 'Usuario sin nombre';
+        
+        // Comprobar explícitamente todas las posibles fuentes de contraseña
+        const contraseña = credencial.contraseña || credencial.password || credencial.pass || '';
+        
+        // Log de diagnóstico para cada item que se añade al desplegable
+        logMessage(`Añadiendo credencial al desplegable: ${usuarioDisplay} con contraseña=${contraseña ? 'presente' : 'ausente'}`, 'info', true);
+
+        // Crear elemento para el usuario
+        const userDiv = document.createElement('div');
+        userDiv.className = 'passwd-credential-user';
+        userDiv.textContent = usuarioDisplay;
+        credItem.appendChild(userDiv);
+
+        // Crear contenedor para acciones
+        const actionsDiv = document.createElement('div');
+        actionsDiv.className = 'passwd-credential-actions';
+
+        // Botón para rellenar
+        const fillButton = document.createElement('button');
+        fillButton.className = 'passwd-fill-button';
+        fillButton.textContent = 'Rellenar';
+        
+        // Añadir evento click para rellenar el formulario
+        fillButton.addEventListener('click', () => {
+          logMessage(`Rellenando formulario con credencial: ${usuarioDisplay}`, 'info', true);
+          rellenarFormulario({
+            usuario: credencial.usuario || credencial.email || credencial.correo,
+            contraseña: contraseña
           });
-        } else {
-          logMessage('No se puede añadir el desplegable: document.body no disponible', 'error');
-        }
-      } catch (error) {
-        logMessage(`Error al posicionar el desplegable: ${error}`, 'error');
-      }
-    } catch (error) {
-      logMessage(`Error al mostrar el desplegable de credenciales: ${error}`, 'error');
-      desplegableVisible = false;
+          dropdown.remove();
+          desplegableVisible = false;
+        });
+
+        actionsDiv.appendChild(fillButton);
+        credItem.appendChild(actionsDiv);
+        credentialsContainer.appendChild(credItem);
+      });
     }
-  } catch (e) {
-    logMessage(`Error grave al mostrar desplegable: ${e}`, 'error');
+
+    dropdown.appendChild(credentialsContainer);
+
+    // Posicionar el desplegable
+    if (targetElement && targetElement.getBoundingClientRect) {
+      const rect = targetElement.getBoundingClientRect();
+      dropdown.style.top = `${window.scrollY + rect.bottom + 5}px`;
+      dropdown.style.left = `${window.scrollX + rect.left}px`;
+    } else {
+      // Posición predeterminada si no hay targetElement
+      dropdown.style.top = `${window.scrollY + 100}px`;
+      dropdown.style.left = `${window.scrollX + 100}px`;
+    }
+
+    // Añadir al DOM con efecto de aparición
+    document.body.appendChild(dropdown);
+    desplegableVisible = true;
+    
+    // Aplicar animación de entrada
+    dropdown.style.opacity = '0';
+    dropdown.style.transform = 'translateY(-10px)';
+    
+    // Forzar reflow
+    dropdown.offsetHeight;
+    
+    // Animar entrada
+    dropdown.style.transition = 'opacity 0.3s, transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1)';
+    dropdown.style.opacity = '1';
+    dropdown.style.transform = 'translateY(0)';
+    
+    console.log("Desplegable añadido al DOM y establecido como visible:", dropdown);
+
+    // Cerrar al hacer clic fuera
+    document.addEventListener('click', function closeDropdown(e) {
+      if (!dropdown.contains(e.target) && e.target !== targetElement) {
+        // Animación de salida
+        dropdown.style.opacity = '0';
+        dropdown.style.transform = 'translateY(-10px)';
+        dropdown.style.transition = 'opacity 0.3s, transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1)';
+        
+        setTimeout(() => {
+          if (document.body.contains(dropdown)) {
+            dropdown.remove();
+            desplegableVisible = false;
+          }
+        }, 300);
+        
+        document.removeEventListener('click', closeDropdown);
+      }
+    });
+  } catch (error) {
+    console.error("Error al mostrar desplegable:", error);
+    // Intento de solución de emergencia
+    try {
+      const emergencyDiv = document.createElement('div');
+      emergencyDiv.style.position = 'fixed';
+      emergencyDiv.style.top = '10px';
+      emergencyDiv.style.left = '10px';
+      emergencyDiv.style.backgroundColor = 'red';
+      emergencyDiv.style.color = 'white';
+      emergencyDiv.style.padding = '10px';
+      emergencyDiv.style.zIndex = '9999999999';
+      emergencyDiv.textContent = `Error al mostrar credenciales: ${error.message}`;
+      document.body.appendChild(emergencyDiv);
+      setTimeout(() => emergencyDiv.remove(), 5000);
+    } catch (e) {
+      // Si todo falla, al menos mostrar por consola
+      console.error("Error crítico al mostrar credenciales:", e);
+    }
   }
 }
 
@@ -612,8 +654,8 @@ function añadirIconosACamposLogin() {
           // Actualizar posición del icono existente
           const rect = campo.getBoundingClientRect();
           if (rect.width > 0 && rect.height > 0) {
-            const newTop = rect.top + window.scrollY + (rect.height / 2) - 11;
-            const newLeft = rect.right + window.scrollX - 28;
+            const newTop = rect.top + window.scrollY + (rect.height / 2) - 14;
+            const newLeft = rect.right + window.scrollX - 35;
             iconoExistente.style.top = newTop + 'px';
             iconoExistente.style.left = newLeft + 'px';
           }
@@ -626,16 +668,16 @@ function añadirIconosACamposLogin() {
           return;
         }
         
-        // Crear icono
+        // Crear icono mejorado con sombra y gradientes
         const icono = document.createElement('div');
         icono.className = 'passwd-logo-hint';
         icono.textContent = 'P';
         icono.title = 'PASSWD - Haz clic para ver credenciales guardadas';
         icono.setAttribute('data-campo-id', fieldId);
         
-        // Calcular posición inicial
-        const top = rect.top + window.scrollY + (rect.height / 2) - 11;
-        const left = rect.right + window.scrollX - 28;
+        // Calcular posición inicial (centrado verticalmente)
+        const top = rect.top + window.scrollY + (rect.height / 2) - 14;
+        const left = rect.right + window.scrollX - 35;
         icono.style.top = top + 'px';
         icono.style.left = left + 'px';
         
@@ -653,36 +695,49 @@ function añadirIconosACamposLogin() {
           }
           
           icono.style.display = 'flex';
-          const newTop = newRect.top + window.scrollY + (newRect.height / 2) - 11;
-          const newLeft = newRect.right + window.scrollX - 28;
+          const newTop = newRect.top + window.scrollY + (newRect.height / 2) - 14;
+          const newLeft = newRect.right + window.scrollX - 35;
           icono.style.top = newTop + 'px';
           icono.style.left = newLeft + 'px';
         };
         
         // Configurar evento de clic
-        icono.addEventListener('click', (e) => {
+        icono.addEventListener('click', function() {
+          // Definir targetElement como el icono en el que se ha hecho clic
+          const targetElement = icono;
+          
           try {
-            e.stopPropagation();
-            e.preventDefault();
-            
-            console.log(`Clic en icono para campo ${fieldId}`);
-            
-            // Si hay un desplegable visible, eliminarlo
-            if (desplegableVisible) {
-              const desplegableExistente = document.querySelector('.passwd-dropdown');
-              if (desplegableExistente) desplegableExistente.remove();
+            // Si el desplegable ya está visible y tiene la clase activa, cerrarlo
+            if (desplegableVisible && icono.classList.contains('active')) {
+              console.log('Cerrando desplegable existente');
+              const dropdown = document.getElementById('passwd-credentials-dropdown');
+              if (dropdown) {
+                dropdown.style.opacity = '0';
+                dropdown.style.transform = 'translateY(-10px)';
+                dropdown.style.transition = 'opacity 0.3s, transform 0.3s';
+                setTimeout(() => {
+                  if (document.body.contains(dropdown)) {
+                    dropdown.remove();
               desplegableVisible = false;
+                  }
+                }, 200);
+              }
+              // Quitar clase activa
+              icono.classList.remove('active');
               return;
             }
+            
+            // Añadir clase activa
+            icono.classList.add('active');
             
             // Ver si tenemos credenciales disponibles
             if (credencialesDisponibles && credencialesDisponibles.length > 0) {
               console.log(`Mostrando ${credencialesDisponibles.length} credenciales disponibles`);
-              mostrarDesplegableCredenciales(credencialesDisponibles, campo);
+              mostrarDesplegableCredenciales(targetElement, credencialesDisponibles);
             } else {
               console.log('Solicitando credenciales al background script...');
               // Mostrar un desplegable con mensaje de carga
-              mostrarDesplegableCredenciales([], campo, 'Buscando credenciales...');
+              mostrarDesplegableCredenciales(targetElement, null, 'Buscando credenciales...');
               
               // Solicitar credenciales para este sitio
               sendMessageSafely({
@@ -693,22 +748,22 @@ function añadirIconosACamposLogin() {
                 console.log('Respuesta de get_credentials_for_site:', response);
                 if (response && response.credenciales && response.credenciales.length > 0) {
                   credencialesDisponibles = response.credenciales;
-                  mostrarDesplegableCredenciales(credencialesDisponibles, campo);
+                  mostrarDesplegableCredenciales(targetElement, credencialesDisponibles);
                 } else {
                   console.log('No se recibieron credenciales válidas');
                   // Mostrar mensaje de error en el desplegable
-                  mostrarDesplegableCredenciales([], campo, 'No se encontraron credenciales para este sitio');
+                  mostrarDesplegableCredenciales(targetElement, null, 'No se encontraron credenciales para este sitio');
                 }
               })
               .catch(error => {
                 console.error('Error al solicitar credenciales:', error);
                 // Mostrar error en el desplegable
-                mostrarDesplegableCredenciales([], campo, 'Error al obtener credenciales: ' + (error.message || 'Desconocido'));
+                mostrarDesplegableCredenciales(targetElement, null, 'Error al obtener credenciales: ' + (error.message || 'Desconocido'));
               });
             }
           } catch (e) {
             console.error('Error al manejar clic en icono:', e);
-            mostrarDesplegableCredenciales([], campo, 'Error al procesar la acción: ' + (e.message || 'Desconocido'));
+            mostrarDesplegableCredenciales(targetElement, null, 'Error al procesar la acción: ' + (e.message || 'Desconocido'));
           }
         });
         
@@ -844,8 +899,32 @@ function getBaseDomain(dominio) {
   try {
     if (!dominio) return '';
     
+    // Convertir a minúsculas para normalización
+    let domain = dominio.toLowerCase();
+    
+    // Definir grupos de servicios relacionados
+    const serviciosRelacionados = {
+      'google': ['google', 'gmail', 'youtube', 'drive.google', 'docs.google', 'photos.google', 'meet.google', 'play.google', 'maps.google', 'calendar.google'],
+      'microsoft': ['microsoft', 'outlook', 'live', 'hotmail', 'office365', 'onedrive', 'sharepoint', 'office.com', 'msn', 'skype', 'bing', 'xbox'],
+      'apple': ['apple', 'icloud', 'me.com', 'itunes', 'appleid'],
+      'amazon': ['amazon', 'aws.amazon', 'kindle', 'audible', 'prime'],
+      'meta': ['facebook', 'instagram', 'whatsapp', 'messenger', 'oculus', 'meta'],
+      'adobe': ['adobe', 'creativesuite', 'photoshop.com', 'acrobat.com'],
+      'yahoo': ['yahoo', 'flickr', 'tumblr']
+    };
+    
+    // Verificar si el dominio pertenece a algún grupo de servicios
+    for (const [grupo, servicios] of Object.entries(serviciosRelacionados)) {
+      if (servicios.some(servicio => domain.includes(servicio))) {
+        console.log(`Grupo de servicios detectado: ${dominio} -> ${grupo}`);
+        return grupo;
+      }
+    }
+    
+    // Continuar con el algoritmo normal si no es un servicio conocido
+    
     // Eliminar protocolo
-    let domain = dominio.replace(/^(https?:\/\/)?(www\.)?/i, '');
+    domain = domain.replace(/^(https?:\/\/)?(www\.)?/i, '');
     
     // Eliminar ruta y parámetros
     domain = domain.split('/')[0];
@@ -854,7 +933,7 @@ function getBaseDomain(dominio) {
     const parts = domain.split('.');
     
     // Dominios de segundo nivel específicos
-    const secondLevelDomains = ['co.uk', 'com.br', 'com.mx', 'com.ar', 'com.co'];
+    const secondLevelDomains = ['co.uk', 'com.br', 'com.mx', 'com.ar', 'com.co', 'co.jp', 'co.in', 'co.nz', 'com.au', 'org.uk'];
     
     if (parts.length > 2) {
       const lastTwoParts = parts.slice(-2).join('.');
@@ -882,28 +961,29 @@ function filtrarCredencialesPorDominio(credenciales, dominio) {
     const baseDomain = getBaseDomain(dominio);
     console.log(`Filtrando credenciales para dominio: ${dominio} (base: ${baseDomain})`);
     
-    // Caso especial para Google
-    const isGoogle = baseDomain.includes('google') || dominio.includes('google');
+    // Grupos de servicios identificados por su dominio base normalizado
+    const gruposServicios = ['google', 'microsoft', 'apple', 'amazon', 'meta', 'adobe', 'yahoo'];
+    
+    // Verificar si estamos tratando con un grupo de servicios
+    const esGrupoServicios = gruposServicios.includes(baseDomain);
     
     return credenciales.filter(cred => {
       if (!cred.sitio) return false;
       
       const credDomain = getBaseDomain(cred.sitio);
       
-      // Para Google, ser más permisivo
-      if (isGoogle && (credDomain.includes('google') || cred.sitio.includes('google'))) {
-        console.log(`Coincidencia Google: ${cred.usuario} para ${cred.sitio}`);
-        return true;
+      // Si estamos en un grupo de servicios, comparar por grupo
+      if (esGrupoServicios) {
+        const match = credDomain === baseDomain;
+        if (match) {
+          console.log(`Credencial coincidente por grupo de servicios: ${cred.usuario} para ${cred.sitio} (${credDomain})`);
+        }
+        return match;
       }
       
       // Coincidencia normal por dominio base
       const match = credDomain === baseDomain;
       
-      if (match) {
-        console.log(`Credencial coincidente: ${cred.usuario} para ${cred.sitio} (${credDomain})`);
-      }
-      
-      return match;
     });
   } catch (e) {
     console.error('Error al filtrar credenciales:', e);
@@ -1059,17 +1139,17 @@ function logMessage(message, type = 'info', force = false) {
       
       // Elegir el método según el tipo
       switch (type.toLowerCase()) {
-        case 'error':
+    case 'error':
           console.error(formattedMessage);
-          break;
-        case 'warn':
+      break;
+    case 'warn':
           console.warn(formattedMessage);
-          break;
+      break;
         case 'success':
           console.log('%c' + formattedMessage, 'color: green; font-weight: bold;');
-          break;
+      break;
         case 'info':
-        default:
+    default:
           console.log('%c' + formattedMessage, 'color: #4285F4;');
           break;
       }
@@ -1273,7 +1353,7 @@ function requestCredentials() {
   if (!extensionContextValid || waitingForCredentials) return;
   
   waitingForCredentials = true;
-  console.log('Solicitando credenciales proactivamente...');
+  logMessage('Solicitando credenciales para este sitio...', 'info', true);
   
   sendMessageSafely({
     action: 'get_credentials_for_site',
@@ -1281,20 +1361,55 @@ function requestCredentials() {
   })
   .then(response => {
     waitingForCredentials = false;
+    
     if (response && response.credenciales && response.credenciales.length > 0) {
-      console.log(`Recibidas ${response.credenciales.length} credenciales proactivamente`);
-      credencialesDisponibles = response.credenciales;
+      logMessage(`Recibidas ${response.credenciales.length} credenciales desde el background script`, 'info', true);
+      
+      // Asegurar que cada credencial tenga su contraseña correctamente establecida
+      const credencialesCompletas = response.credenciales.map(cred => {
+        // Log diagnóstico para cada credencial recibida
+        logMessage(`Credencial recibida: usuario=${cred.usuario}, contraseña=${cred.contraseña ? 'presente' : 'ausente'}, password=${cred.password ? 'presente' : 'ausente'}`, 'info', true);
+        
+        // Asegurar que la contraseña esté disponible en el campo 'contraseña' (además de cualquier otro campo)
+        if (!cred.contraseña && (cred.password || cred.pass)) {
+          cred.contraseña = cred.password || cred.pass;
+          logMessage('Añadida contraseña al campo "contraseña" desde campos alternativos', 'info', true);
+        }
+        
+        return cred;
+      });
+      
+      // Actualizar la lista global
+      credencialesDisponibles = credencialesCompletas;
+      
       // Log para debug
       logCredencialesDisponibles();
-      // Forzar actualización de iconos
+      
+      // Actualizar iconos
       añadirIconosACamposLogin();
+      
+      return true;
     } else {
-      console.log('No se recibieron credenciales en la solicitud proactiva');
+      if (response && response.error) {
+        logMessage(`Error al solicitar credenciales: ${response.error}`, 'warn', true);
+        
+        // Si el error es de autenticación, podemos mostrar un mensaje sutil
+        if (response.requiresAuth) {
+          logMessage('Se requiere autenticación para ver credenciales guardadas', 'warn', true);
+        }
+      } else {
+        logMessage('No se encontraron credenciales para este sitio', 'info', true);
+      }
+      
+      // Limpiar las credenciales actuales
+      credencialesDisponibles = [];
+      return false;
     }
   })
-  .catch(e => {
+  .catch(error => {
     waitingForCredentials = false;
-    console.warn('Error al solicitar credenciales proactivamente:', e);
+    logMessage(`Error al solicitar credenciales: ${error}`, 'error', true);
+    return false;
   });
 }
 
@@ -1439,8 +1554,8 @@ function detectarEnvioFormularios() {
                   logMessage(`Dominio en lista de autoguardado: ${window.location.hostname}`, 'info', DEBUG_MODE);
                   
                   // Mostrar diálogo con un pequeño retraso para permitir que el formulario se envíe
-                  setTimeout(() => {
-                    mostrarDialogoGuardarCredenciales(sitio, usuario, password);
+        setTimeout(() => {
+          mostrarDialogoGuardarCredenciales(sitio, usuario, password);
                   }, 1000);
                 } else {
                   // Guardar para posible uso posterior (después de verificar respuesta XHR/fetch)
@@ -1953,500 +2068,586 @@ function detectarEnvioFormularios() {
 }
 
 // Función para mostrar el diálogo preguntando si quiere guardar las credenciales
-function mostrarDialogoGuardarCredenciales(sitio, usuario, password) {
-  try {
-    logMessage(`!!!FUNCIÓN CRÍTICA!!! Iniciando mostrarDialogoGuardarCredenciales para: ${sitio}, usuario: ${usuario.substring(0, 2)}***`, 'info', true);
-    
-    // Verificar permisos de notificaciones
-    if (chrome.notifications) {
-      logMessage('API chrome.notifications está disponible', 'info', true);
-    } else {
-      logMessage('API chrome.notifications NO está disponible', 'error', true);
-    }
-    
-    // Verificar si runtime está disponible
-    if (chrome.runtime && chrome.runtime.id) {
-      logMessage(`Runtime disponible con ID: ${chrome.runtime.id}`, 'info', true);
-    } else {
-      logMessage('Runtime no disponible o sin ID - podría haber problemas de comunicación', 'error', true);
-    }
-    
-    // Verificar que document.body existe
-    if (!document.body) {
-      logMessage('Error: document.body no está disponible, no se puede mostrar el diálogo', 'error', true);
-      
-      // Programar un reintento
-      setTimeout(() => {
-        logMessage('Reintentando mostrar diálogo después de esperar document.body', 'info', true);
-        if (document.body) {
-          mostrarDialogoGuardarCredenciales(sitio, usuario, password);
-        } else {
-          logMessage('document.body sigue sin estar disponible, usando método alternativo', 'warn', true);
-          // Intentar con notificación del sistema directamente
-          mostrarNotificacionSistema();
-        }
-      }, 1000);
-      return;
-    }
-    
-    // Evitar mostrar múltiples diálogos
-    if (window.passwdDialogShowing) {
-      logMessage('Ya se está mostrando un diálogo de guardar credenciales', 'info', true);
-      return;
-    }
-    
-    // Marcar que estamos mostrando un diálogo
-    window.passwdDialogShowing = true;
+function mostrarDialogoGuardarCredenciales(credenciales) {
+  // Evitar que se muestre si ya hay un diálogo visible
+  if (document.getElementById('passwd-dialog')) {
+    console.log("[PASSWD] Ya existe un diálogo. No se creará otro.");
+    return;
+  }
   
-    logMessage(`Mostrando diálogo para guardar credenciales: ${sitio} / ${usuario}`, 'info', true);
-    
-    // Verificar que tenemos todos los datos necesarios
-    if (!sitio || !usuario || !password) {
-      logMessage('Error: Faltan datos para mostrar el diálogo de guardado', 'error', true);
-      console.error('PASSWD: Datos incompletos:', { sitio, usuario: usuario ? 'presente' : 'ausente', password: password ? 'presente' : 'ausente' });
-      window.passwdDialogShowing = false;
-      return;
-    }
+  console.log("[PASSWD] Mostrando diálogo para guardar credenciales:", credenciales);
 
-    // Variable para rastrear si se mostró algún diálogo
-    let dialogoMostrado = false;
-    
-    // Timer para forzar un método alternativo si nada funciona en 3 segundos
-    const timerSeguridad = setTimeout(() => {
-      if (!dialogoMostrado) {
-        logMessage('TIMER DE SEGURIDAD ACTIVADO: Forzando diálogo tradicional después de 3s sin respuesta', 'error', true);
-        mostrarDialogoTradicional();
-      }
-    }, 3000);
-    
-    // Función para mostrar notificación del sistema
-    function mostrarNotificacionSistema(intentos = 0) {
-      try {
-        logMessage(`Intentando mostrar notificación del sistema (intento ${intentos + 1})`, 'info', true);
-        
-        // Agregar diagnóstico de runtime
-        if (!chrome.runtime) {
-          logMessage('Error crítico: chrome.runtime no está disponible', 'error', true);
-          if (intentos < 2) {
-            logMessage(`Reintentando en 1s (intento ${intentos + 1})`, 'warn', true);
-            setTimeout(() => mostrarNotificacionSistema(intentos + 1), 1000);
-          } else {
-            logMessage('Agotados intentos de notificación, usando método tradicional', 'error', true);
-            mostrarDialogoTradicional();
-          }
-          return;
-        }
-        
-        if (!chrome.runtime.id) {
-          logMessage('Error: chrome.runtime.id no disponible (contexto inválido)', 'error', true);
-          if (intentos < 2) {
-            setTimeout(() => {
-              checkExtensionConnection();
-              mostrarNotificacionSistema(intentos + 1);
-            }, 1000);
-          } else {
-            logMessage('Agotados intentos de reconexión, usando método tradicional', 'error', true);
-            mostrarDialogoTradicional();
-          }
-          return;
-        }
-        
-        // Preparar mensaje con datos más claros
-        const mensajeCredenciales = {
-          action: 'show_save_notification',
-          data: {
-            sitio: sitio,
-            usuario: usuario
-          },
-          source: 'content_script',
-          timestamp: Date.now(),
-          tabUrl: window.location.href
-        };
-        
-        logMessage(`Enviando mensaje a background: ${JSON.stringify(mensajeCredenciales)}`, 'info', true);
-        
-        chrome.runtime.sendMessage(mensajeCredenciales, function(response) {
-          if (chrome.runtime.lastError) {
-            const errorMsg = chrome.runtime.lastError.message;
-            logMessage(`Error al mostrar notificación del sistema: ${errorMsg}`, 'error', true);
-            
-            // Verificar si es un error de conexión
-            if (errorMsg.includes('Extension context invalidated') || 
-                errorMsg.includes('disconnected port')) {
-              logMessage('Error de contexto de extensión, intentando reconectar...', 'warn', true);
-              setTimeout(() => {
-                checkExtensionConnection();
-                // Si la reconexión fue exitosa, reintentar
-                if (extensionContextValid) {
-                  setTimeout(() => mostrarNotificacionSistema(intentos + 1), 500);
-                } else {
-                  mostrarDialogoTradicional();
-                }
-              }, 500);
-              return;
-            }
-            
-            // Llegados a este punto, hacemos doble intento
-            if (intentos < 2) {
-              logMessage(`Reintentando mostrar notificación (intento ${intentos + 2})`, 'warn', true);
-              setTimeout(() => mostrarNotificacionSistema(intentos + 1), 1000);
-              return;
-            }
-            
-            // Si seguimos fallando, método tradicional
-            logMessage('No se pudo mostrar notificación después de varios intentos, usando método tradicional', 'error', true);
-            mostrarDialogoTradicional();
-            return;
-          }
-          
-          logMessage(`Respuesta de show_save_notification: ${JSON.stringify(response)}`, 'info', true);
-          
-          if (response && response.success) {
-            logMessage('Notificación del sistema mostrada correctamente', 'success', true);
-            // Marcar que se mostró un diálogo
-            dialogoMostrado = true;
-            clearTimeout(timerSeguridad);
-            
-            // También preparar las credenciales para cuando el usuario interactúe con la notificación
-            const prepareData = {
-              action: 'prepare_credentials',
-              credencial: {
-                sitio: sitio,
-                usuario: usuario,
-                contraseña: password
-              },
-              source: 'content_script',
-              timestamp: Date.now(),
-              notificationId: response.notificationId
-            };
-            
-            logMessage(`Preparando credenciales para guardar: ${JSON.stringify(prepareData)}`, 'info', true);
-            
-            chrome.runtime.sendMessage(prepareData, function(prepareResponse) {
-              logMessage(`Respuesta de prepare_credentials: ${JSON.stringify(prepareResponse)}`, 'info', true);
-              
-              if (chrome.runtime.lastError) {
-                logMessage(`Error al preparar credenciales: ${chrome.runtime.lastError.message}`, 'error', true);
-              } else if (prepareResponse && prepareResponse.success) {
-                logMessage('Credenciales preparadas correctamente con ID: ' + prepareResponse.id, 'success', true);
-              }
-            });
-            window.passwdDialogShowing = false;
-          } else {
-            if (intentos < 2) {
-              logMessage(`Notificación falló, reintentando (intento ${intentos + 2})`, 'warn', true);
-              setTimeout(() => mostrarNotificacionSistema(intentos + 1), 1000);
-            } else {
-              logMessage('No se pudo mostrar notificación después de varios intentos, usando método tradicional', 'error', true);
-              mostrarDialogoTradicional();
-            }
-          }
-        });
-      } catch (notifError) {
-        logMessage(`Error al intentar mostrar notificación del sistema: ${notifError.message}`, 'error', true);
-        console.error('PASSWD: Detalles de error en notificación:', notifError);
-        
-        // Reintento limitado para errores críticos
-        if (intentos < 2) {
-          setTimeout(() => mostrarNotificacionSistema(intentos + 1), 1000);
-        } else {
-          // Continue con el método tradicional después de agotar intentos
-          mostrarDialogoTradicional();
-        }
-      }
-    }
-    
-    // Función para mostrar el diálogo tradicional en DOM
-    function mostrarDialogoTradicional() {
-      try {
-        // Si ya se mostró un diálogo, no mostrar otro
-        if (dialogoMostrado) {
-          logMessage('Ya se mostró un diálogo, no mostrando el tradicional', 'info', true);
-          return;
-        }
-        
-        // Marcar que se mostró un diálogo
-        dialogoMostrado = true;
-        clearTimeout(timerSeguridad);
-        
-        logMessage('CREANDO DIÁLOGO TRADICIONAL URGENTE EN DOM', 'info', true);
-        
-        // Crear contenedor principal
-        const dialogContainer = document.createElement('div');
-        dialogContainer.id = 'passwd-save-dialog';
-        
-        // Estilo base del diálogo para asegurar que sea visible
-        Object.assign(dialogContainer.style, {
-          position: 'fixed',
-          top: '20px',
-          right: '20px',
-          width: '320px',
-          maxWidth: '90%',
-          backgroundColor: '#fff',
-          border: '1px solid #ccc',
-          borderRadius: '8px',
-          boxShadow: '0 2px 10px rgba(0,0,0,0.2)',
-          zIndex: '2147483647',
-          padding: '15px',
-          fontFamily: 'Arial, sans-serif',
-          fontSize: '14px',
-          color: '#333',
-          display: 'flex',
-          flexDirection: 'column',
-          animation: 'passwd-fade-in 0.3s'
-        });
-        
-        // Estilo de animación
-        const styleElement = document.createElement('style');
-        styleElement.textContent = `
-          @keyframes passwd-fade-in {
-            from { opacity: 0; transform: translateY(-20px); }
-            to { opacity: 1; transform: translateY(0); }
-          }
-        `;
-        document.head.appendChild(styleElement);
-        
-        // Crear el contenido del diálogo
-        const header = document.createElement('div');
-        header.style.display = 'flex';
-        header.style.justifyContent = 'space-between';
-        header.style.alignItems = 'center';
-        header.style.marginBottom = '10px';
-        
-        const title = document.createElement('h3');
-        title.textContent = 'PASSWD - Guardar Credenciales';
-        title.style.margin = '0';
-        title.style.fontSize = '16px';
-        title.style.fontWeight = 'bold';
-        
-        const closeButton = document.createElement('button');
-        closeButton.textContent = '×';
-        closeButton.style.background = 'none';
-        closeButton.style.border = 'none';
-        closeButton.style.fontSize = '20px';
-        closeButton.style.cursor = 'pointer';
-        closeButton.style.padding = '0 5px';
-        closeButton.style.marginLeft = '10px';
-        
-        header.appendChild(title);
-        header.appendChild(closeButton);
-        
-        const content = document.createElement('div');
-        content.style.marginBottom = '15px';
-        
-        // Simplificar la URL para mostrar
-        let displayUrl = sitio;
-        try {
-          const urlObj = new URL(sitio);
-          displayUrl = urlObj.hostname;
-        } catch (e) {
-          // Mantener la URL original si hay error
-          console.log('Error al procesar URL:', e);
-        }
-        
-        // Truncar URL si es muy larga
-        if (displayUrl.length > 30) {
-          displayUrl = displayUrl.substring(0, 27) + '...';
-        }
-        
-        // Aplicar estilo de texto usuario
-        let displayUser = usuario;
-        if (displayUser.length > 25) {
-          displayUser = displayUser.substring(0, 22) + '...';
-        }
-        
-        const message = document.createElement('p');
-        message.innerHTML = `¿Deseas guardar la contraseña para <strong>${displayUser}</strong> en <strong>${displayUrl}</strong>?`;
-        message.style.margin = '0 0 10px 0';
-        
-        content.appendChild(message);
-        
-        const buttons = document.createElement('div');
-        buttons.style.display = 'flex';
-        buttons.style.justifyContent = 'flex-end';
-        
-        const cancelButton = document.createElement('button');
-        cancelButton.textContent = 'Cancelar';
-        cancelButton.style.marginRight = '10px';
-        cancelButton.style.padding = '8px 12px';
-        cancelButton.style.border = '1px solid #ccc';
-        cancelButton.style.borderRadius = '4px';
-        cancelButton.style.background = '#f5f5f5';
-        cancelButton.style.cursor = 'pointer';
-        
-        const saveButton = document.createElement('button');
-        saveButton.textContent = 'Guardar';
-        saveButton.style.padding = '8px 12px';
-        saveButton.style.border = '1px solid #4285f4';
-        saveButton.style.borderRadius = '4px';
-        saveButton.style.background = '#4285f4';
-        saveButton.style.color = '#fff';
-        saveButton.style.cursor = 'pointer';
-        
-        buttons.appendChild(cancelButton);
-        buttons.appendChild(saveButton);
-        
-        // Construir el diálogo
-        dialogContainer.appendChild(header);
-        dialogContainer.appendChild(content);
-        dialogContainer.appendChild(buttons);
-        
-        // Función para cerrar el diálogo
-        function cerrarDialogo() {
-          try {
-            // Si el diálogo ya se cerró o no existe, no hacer nada
-            if (!dialogContainer || !dialogContainer.parentNode) {
-              return;
-            }
-            
-            // Animación de cierre
-            dialogContainer.style.animation = 'passwd-fade-out 0.2s';
-            
-            setTimeout(() => {
-              try {
-                if (dialogContainer.parentNode) {
-                  dialogContainer.parentNode.removeChild(dialogContainer);
-                }
-                window.passwdDialogShowing = false;
-              } catch (e) {
-                console.error('Error al remover diálogo:', e);
-              }
-            }, 200);
-          } catch (e) {
-            logMessage(`Error al cerrar diálogo: ${e.message}`, 'error', true);
-            // Eliminar el diálogo directamente en caso de error
-            try {
-              if (dialogContainer.parentNode) {
-                dialogContainer.parentNode.removeChild(dialogContainer);
-              }
-            } catch (e2) {}
-            window.passwdDialogShowing = false;
-          }
-        }
-        
-        // Función para guardar credenciales
-        function guardarCredencialesClick() {
-          logMessage('Usuario hizo clic en guardar credenciales', 'info', true);
-          cerrarDialogo();
-          guardarCredenciales(sitio, usuario, password);
-        }
-        
-        // Agregar listeners a los botones
-        saveButton.addEventListener('click', guardarCredencialesClick);
-        cancelButton.addEventListener('click', cerrarDialogo);
-        closeButton.addEventListener('click', cerrarDialogo);
-        
-        // Estilo de animación para cerrar (añadir a la hoja de estilos)
-        styleElement.textContent += `
-          @keyframes passwd-fade-out {
-            from { opacity: 1; transform: translateY(0); }
-            to { opacity: 0; transform: translateY(-20px); }
-          }
-        `;
-        
-        // Agregar el diálogo al DOM
-        document.body.appendChild(dialogContainer);
-        
-        logMessage('Diálogo tradicional mostrado correctamente', 'success', true);
-      } catch (dialogError) {
-        logMessage(`Error crítico al mostrar diálogo tradicional: ${dialogError.message}`, 'error', true);
-        console.error('PASSWD: Error al crear diálogo DOM:', dialogError);
-        
-        // Intento final: mostrar un diálogo de alerta nativo
-        try {
-          if (confirm(`PASSWD: ¿Deseas guardar tus credenciales para ${usuario}?`)) {
-            guardarCredenciales(sitio, usuario, password);
-          }
-        } catch (alertError) {
-          logMessage(`Error final al mostrar alerta: ${alertError.message}`, 'error', true);
-          console.error('PASSWD: No se pudo mostrar ningún tipo de diálogo');
-        }
-        
-        window.passwdDialogShowing = false;
-      }
-    }
-    
+  try {
     // Intentar mostrar la notificación del sistema primero
-    logMessage('Llamando a mostrarNotificacionSistema como primera opción', 'info', true);
-    mostrarNotificacionSistema();
+    chrome.runtime.sendMessage({
+      action: "show_save_notification",
+      credenciales: credenciales
+    }, response => {
+      console.log("[PASSWD] Respuesta de notificación del sistema:", response);
+      
+      // Si no se pudo mostrar la notificación del sistema o hubo un error, mostrar el diálogo tradicional
+      if (!response || !response.success) {
+        console.log("[PASSWD] No se pudo mostrar la notificación del sistema, mostrando diálogo tradicional");
+        // Asegurarnos de que document.body existe
+        if (document.body) {
+          setTimeout(() => mostrarDialogoTradicional(credenciales), 500);
+        } else {
+          console.error("[PASSWD] document.body no está disponible para mostrar el diálogo");
+        }
+      }
+    });
+  } catch (error) {
+    console.error("[PASSWD] Error al intentar mostrar notificación:", error);
     
-    // Si llegamos aquí, estamos esperando respuesta de la notificación
-    logMessage('Esperando respuesta de la notificación del sistema o timeout de seguridad (3s)', 'info', true);
-  } catch (e) {
-    logMessage(`Error general en mostrarDialogoGuardarCredenciales: ${e.message}`, 'error', true);
-    console.error('PASSWD: Error general al mostrar diálogo:', e);
-    window.passwdDialogShowing = false;
+    // Fallback al diálogo tradicional en caso de error
+    if (document.body) {
+      setTimeout(() => mostrarDialogoTradicional(credenciales), 500);
+    } else {
+      console.error("[PASSWD] document.body no está disponible para mostrar el diálogo");
+    }
   }
 }
 
-// Función para enviar las credenciales al background script
-function guardarCredenciales(sitio, usuario, password) {
+/**
+ * Muestra un diálogo tradicional en el DOM para guardar credenciales
+ * @param {Object} credenciales - Credenciales a guardar 
+ */
+function mostrarDialogoTradicional(credenciales) {
+  logMessage('Mostrando diálogo tradicional para guardar credenciales', 'info', true);
+  
+  // Prevenir múltiples diálogos
+  if (document.getElementById('passwd-extension-dialog')) {
+    logMessage('Ya hay un diálogo abierto, no se muestra otro', 'warning', true);
+    return;
+  }
+
+  // Asegurar que document.body existe
+  if (!document.body) {
+    logMessage('Error: document.body no disponible', 'error', true);
+    return;
+  }
+  
   try {
-    logMessage(`Iniciando guardado de credenciales para: ${sitio}`, 'info', true);
+    // Crear el contenedor del diálogo con efectos visuales mejorados
+    const dialogContainer = document.createElement('div');
+    dialogContainer.id = 'passwd-extension-dialog';
+    dialogContainer.style.cssText = `
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    width: 320px;
+      max-width: 90vw;
+      background: #ffffff;
+      border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15), 0 3px 10px rgba(0, 0, 0, 0.08);
+    z-index: 2147483647;
+      overflow: hidden;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      transition: all 0.3s cubic-bezier(0.2, 0, 0.2, 1);
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      padding: 0;
+      opacity: 0;
+      transform: translateY(-10px) scale(0.98);
+      backdrop-filter: blur(5px);
+    `;
+
+    // Agregar animaciones CSS para efectos visuales
+  const style = document.createElement('style');
+  style.textContent = `
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(-10px) scale(0.98); }
+        to { opacity: 1; transform: translateY(0) scale(1); }
+      }
+      @keyframes fadeOut {
+        from { opacity: 1; transform: translateY(0) scale(1); }
+        to { opacity: 0; transform: translateY(-10px) scale(0.98); }
+      }
+      @keyframes pulse {
+        0% { transform: scale(1) translateZ(0); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15), 0 3px 10px rgba(0, 0, 0, 0.08); }
+        50% { transform: scale(1.02) translateZ(0); box-shadow: 0 10px 35px rgba(0, 0, 0, 0.2), 0 3px 12px rgba(0, 0, 0, 0.1); }
+        100% { transform: scale(1) translateZ(0); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15), 0 3px 10px rgba(0, 0, 0, 0.08); }
+      }
+      @keyframes shine {
+        from { background-position: -200px; }
+        to { background-position: calc(100% + 200px); }
+      }
+      @keyframes shimmerButton {
+        0% { background-position: -100px; }
+        100% { background-position: 200px; }
+    }
+  `;
+  document.head.appendChild(style);
+  
+    // Crear la cabecera del diálogo
+    const dialogHeader = document.createElement('div');
+    dialogHeader.style.cssText = `
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 16px;
+      background: linear-gradient(135deg, #4d90fe, #3367d6);
+      color: white;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+    `;
     
-    // Verificar datos obligatorios
-    if (!sitio || !usuario || !password) {
-      logMessage('Error: Faltan datos obligatorios para guardar credenciales', 'error', true);
-      mostrarNotificacion(false, 'Faltan datos obligatorios');
-      return;
+    // Título del diálogo
+    const title = document.createElement('h3');
+    title.textContent = 'Guardar contraseña';
+    title.style.cssText = `
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
+    `;
+    
+    // Botón de cerrar
+    const closeButton = document.createElement('button');
+    closeButton.innerHTML = '&times;';
+    closeButton.style.cssText = `
+      background: none;
+      border: none;
+      color: white;
+      font-size: 22px;
+      cursor: pointer;
+      padding: 0 4px;
+      line-height: 1;
+      opacity: 0.9;
+      transition: opacity 0.2s, transform 0.2s;
+      font-weight: bold;
+      width: 28px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+    `;
+    closeButton.addEventListener('mouseover', () => {
+      closeButton.style.opacity = '1';
+      closeButton.style.transform = 'scale(1.1)';
+      closeButton.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
+    });
+    closeButton.addEventListener('mouseout', () => {
+      closeButton.style.opacity = '0.9';
+      closeButton.style.transform = 'scale(1)';
+      closeButton.style.backgroundColor = 'transparent';
+    });
+    
+    dialogHeader.appendChild(title);
+    dialogHeader.appendChild(closeButton);
+    
+    // Crear el cuerpo del diálogo
+    const dialogBody = document.createElement('div');
+    dialogBody.style.cssText = `
+      padding: 16px;
+      color: #333;
+    `;
+    
+    // Mensaje
+    const messageContent = document.createElement('p');
+    messageContent.style.cssText = `
+      margin: 0 0 16px 0;
+      font-size: 14px;
+      line-height: 1.5;
+      color: #424242;
+    `;
+    messageContent.textContent = '¿Quieres guardar esta contraseña para este sitio?';
+    
+    // Información del sitio
+    const siteInfo = document.createElement('div');
+    siteInfo.style.cssText = `
+      margin-bottom: 16px;
+      padding: 12px;
+      background-color: rgba(0, 0, 0, 0.02);
+      border-radius: 8px;
+      font-size: 14px;
+      border: 1px solid rgba(0, 0, 0, 0.06);
+    `;
+    
+    // URL (solo dominio)
+    const siteDomain = document.createElement('div');
+    siteDomain.style.cssText = `
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+    `;
+    
+    const siteIcon = document.createElement('span');
+    siteIcon.style.cssText = `
+      display: inline-block;
+      margin-right: 10px;
+      font-size: 16px;
+      color: #5f6368;
+    `;
+    siteIcon.textContent = '🌐';
+    
+    // Obtener solo el dominio para mostrar
+    let displayUrl = credenciales.sitio;
+    try {
+      const url = new URL(credenciales.sitio);
+      displayUrl = url.hostname;
+    } catch (e) {
+      logMessage('No se pudo parsear URL, mostrando tal cual: ' + credenciales.sitio, 'warning');
     }
     
-    // Crear objeto con los datos en el formato correcto para Firebase
+    const siteText = document.createElement('span');
+    siteText.style.cssText = `
+      text-overflow: ellipsis;
+      overflow: hidden;
+      white-space: nowrap;
+      font-weight: 500;
+      max-width: 230px;
+    `;
+    siteText.textContent = displayUrl;
+    siteText.title = credenciales.sitio; // URL completa en tooltip
+    
+    siteDomain.appendChild(siteIcon);
+    siteDomain.appendChild(siteText);
+    
+    // Usuario
+    const userInfo = document.createElement('div');
+    userInfo.style.cssText = `
+      display: flex;
+      align-items: center;
+    `;
+    
+    const userIcon = document.createElement('span');
+    userIcon.style.cssText = `
+      display: inline-block;
+      margin-right: 10px;
+      font-size: 16px;
+      color: #5f6368;
+    `;
+    userIcon.textContent = '👤';
+    
+    const userText = document.createElement('span');
+    userText.style.cssText = `
+      text-overflow: ellipsis;
+      overflow: hidden;
+      white-space: nowrap;
+      max-width: 230px;
+    `;
+    userText.textContent = credenciales.usuario;
+    userText.title = credenciales.usuario; // Usuario completo en tooltip
+    
+    userInfo.appendChild(userIcon);
+    userInfo.appendChild(userText);
+    
+    siteInfo.appendChild(siteDomain);
+    siteInfo.appendChild(userInfo);
+    
+    // Botones de acción
+    const actions = document.createElement('div');
+    actions.style.cssText = `
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      margin-top: 8px;
+    `;
+    
+    // Botón Cancelar
+    const cancelButton = document.createElement('button');
+    cancelButton.textContent = 'Cancelar';
+    cancelButton.style.cssText = `
+      background: none;
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      padding: 8px 14px;
+      font-size: 14px;
+      cursor: pointer;
+      color: #3367d6;
+      font-weight: 500;
+      border-radius: 4px;
+      transition: all 0.2s ease;
+    `;
+    cancelButton.addEventListener('mouseover', () => {
+      cancelButton.style.backgroundColor = 'rgba(51, 103, 214, 0.05)';
+      cancelButton.style.borderColor = 'rgba(51, 103, 214, 0.2)';
+    });
+    cancelButton.addEventListener('mouseout', () => {
+      cancelButton.style.backgroundColor = 'transparent';
+      cancelButton.style.borderColor = 'rgba(0, 0, 0, 0.08)';
+    });
+    cancelButton.addEventListener('mousedown', () => {
+      cancelButton.style.transform = 'scale(0.98)';
+    });
+    cancelButton.addEventListener('mouseup', () => {
+      cancelButton.style.transform = 'scale(1)';
+    });
+    
+    // Botón Guardar
+    const saveButton = document.createElement('button');
+    saveButton.textContent = 'Guardar';
+    saveButton.style.cssText = `
+      background-color: #3367d6;
+      color: white;
+      border: none;
+      padding: 8px 18px;
+      font-size: 14px;
+      font-weight: 500;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      position: relative;
+      overflow: hidden;
+    `;
+    saveButton.addEventListener('mouseover', () => {
+      saveButton.style.backgroundColor = '#4285f4';
+      saveButton.style.transform = 'translateY(-1px)';
+      saveButton.style.boxShadow = '0 2px 5px rgba(66, 133, 244, 0.3)';
+    });
+    saveButton.addEventListener('mouseout', () => {
+      saveButton.style.backgroundColor = '#3367d6';
+      saveButton.style.transform = 'translateY(0)';
+      saveButton.style.boxShadow = 'none';
+    });
+    saveButton.addEventListener('mousedown', () => {
+      saveButton.style.transform = 'scale(0.98)';
+    });
+    saveButton.addEventListener('mouseup', () => {
+      saveButton.style.transform = 'scale(1)';
+    });
+    
+    actions.appendChild(cancelButton);
+    actions.appendChild(saveButton);
+    
+    // Ensamblar el diálogo
+    dialogBody.appendChild(messageContent);
+    dialogBody.appendChild(siteInfo);
+    dialogBody.appendChild(actions);
+    
+    dialogContainer.appendChild(dialogHeader);
+    dialogContainer.appendChild(dialogBody);
+    
+    document.body.appendChild(dialogContainer);
+    
+    // Activar la animación de aparición
+      setTimeout(() => {
+      dialogContainer.style.opacity = '1';
+      dialogContainer.style.transform = 'translateY(0) scale(1)';
+    }, 10);
+    
+    // Efecto visual para llamar la atención
+    setTimeout(() => {
+      dialogContainer.style.animation = 'pulse 2s ease-in-out infinite';
+    }, 1000);
+    
+    // Manejadores de eventos para cerrar el diálogo
+    const cerrarDialogo = () => {
+      dialogContainer.style.animation = '';
+      dialogContainer.style.opacity = '0';
+      dialogContainer.style.transform = 'translateY(-10px) scale(0.98)';
+      
+      setTimeout(() => {
+        if (dialogContainer.parentNode) {
+          dialogContainer.parentNode.removeChild(dialogContainer);
+        }
+        if (style.parentNode) {
+          style.parentNode.removeChild(style);
+        }
+      }, 300);
+    };
+    
+    closeButton.addEventListener('click', cerrarDialogo);
+    cancelButton.addEventListener('click', cerrarDialogo);
+    
+    // Manejador para guardar las credenciales
+    saveButton.addEventListener('click', async () => {
+      const loadingText = saveButton.textContent;
+      saveButton.disabled = true;
+      saveButton.textContent = 'Guardando...';
+      
+      // Efecto visual mientras se guarda
+      const shine = document.createElement('div');
+      shine.style.cssText = `
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(
+          to right,
+          rgba(255, 255, 255, 0) 0%,
+          rgba(255, 255, 255, 0.6) 50%,
+          rgba(255, 255, 255, 0) 100%
+        );
+        background-size: 200px 100%;
+        animation: shimmerButton 1.5s infinite linear;
+        pointer-events: none;
+      `;
+      saveButton.appendChild(shine);
+      
+      try {
+        // Guardar las credenciales
+        logMessage('Enviando credenciales para guardar...', 'info', true);
+        const response = await sendMessageSafely({
+          action: 'guardar_credenciales',
+          datos: credenciales
+        });
+        
+        if (response && response.success) {
+          logMessage('Credenciales guardadas correctamente', 'success', true);
+          
+          // Cambiar el mensaje para mostrar éxito
+          messageContent.textContent = '¡Contraseña guardada correctamente!';
+          messageContent.style.color = '#0f9d58';
+          
+          // Cambiar botones
+          saveButton.textContent = '✓ Guardado';
+          saveButton.style.backgroundColor = '#0f9d58';
+          saveButton.disabled = true;
+          
+          if (shine.parentNode) {
+            shine.parentNode.removeChild(shine);
+          }
+          
+          // Cerrar automáticamente después de 2 segundos
+          setTimeout(cerrarDialogo, 2000);
+        } else {
+          logMessage('Error al guardar credenciales: ' + (response?.error || 'Desconocido'), 'error', true);
+          
+          if (response && response.requiresAuth) {
+            // Problema de autenticación
+            messageContent.textContent = 'Necesitas iniciar sesión para guardar contraseñas.';
+            messageContent.style.color = '#d93025';
+            
+            // Cambiar el botón de guardar a "Iniciar sesión"
+            saveButton.textContent = 'Iniciar sesión';
+            saveButton.style.backgroundColor = '#d93025';
+            saveButton.disabled = false;
+            
+            if (shine.parentNode) {
+              shine.parentNode.removeChild(shine);
+            }
+            
+            // Cambiar el evento click para iniciar sesión
+            saveButton.removeEventListener('click', arguments.callee);
+            saveButton.addEventListener('click', async () => {
+              // Solicitar login
+              await sendMessageSafely({
+                action: 'mostrar_login'
+              });
+              cerrarDialogo();
+            });
+          } else {
+            // Otro tipo de error
+            messageContent.textContent = `Error: ${response?.error || 'No se pudo guardar la contraseña'}`;
+            messageContent.style.color = '#d93025';
+            
+            // Restaurar el botón
+            saveButton.textContent = 'Reintentar';
+            saveButton.style.backgroundColor = '#3367d6';
+            saveButton.disabled = false;
+            
+            if (shine.parentNode) {
+              shine.parentNode.removeChild(shine);
+            }
+          }
+        }
+      } catch (error) {
+        logMessage('Error al guardar credenciales: ' + error.message, 'error', true);
+        
+        // Mostrar mensaje de error
+        messageContent.textContent = `Error: ${error.message || 'No se pudo guardar la contraseña'}`;
+        messageContent.style.color = '#d93025';
+        
+        // Restaurar el botón
+        saveButton.textContent = 'Reintentar';
+        saveButton.style.backgroundColor = '#3367d6';
+        saveButton.disabled = false;
+        
+        if (shine.parentNode) {
+          shine.parentNode.removeChild(shine);
+        }
+      }
+    });
+    
+    // Cerrar el diálogo al hacer clic fuera de él (opcional)
+    const clickOutside = (e) => {
+      if (!dialogContainer.contains(e.target) && e.target !== dialogContainer) {
+        document.removeEventListener('click', clickOutside);
+        cerrarDialogo();
+      }
+    };
+    
+    // Activar después de un breve retraso para evitar que se cierre inmediatamente
+    setTimeout(() => {
+      document.addEventListener('click', clickOutside);
+    }, 300);
+    
+    logMessage('Diálogo para guardar credenciales creado correctamente', 'success', true);
+  } catch (error) {
+    logMessage('Error al crear diálogo de guardar credenciales: ' + error.message, 'error', true);
+    // Intentar mostrar una notificación simple como respaldo
+    mostrarNotificacion(false, 'Error al mostrar diálogo: ' + error.message);
+  }
+}
+
+// Función para guardar credenciales en la base de datos
+function guardarCredenciales(sitio, usuario, password) {
+  try {
+    logMessage(`Guardando credenciales para ${sitio}`, 'info', true);
+    
+    // Validar datos básicos
+    if (!sitio || !usuario || !password) {
+      logMessage('Datos de credenciales incompletos', 'error', true);
+      mostrarNotificacion(false, 'Datos incompletos o inválidos');
+      return false;
+    }
+    
+    // Verificar si es una URL válida
+    try {
+      new URL(sitio);
+    } catch (e) {
+      logMessage(`URL inválida: ${sitio}`, 'error', true);
+      mostrarNotificacion(false, 'La URL proporcionada no es válida');
+      return false;
+    }
+    
+    // Preparar datos para enviar
     const credencial = {
       sitio: sitio,
       usuario: usuario,
-      contraseña: password // Asegurar que la clave es "contraseña" con tilde
+      contraseña: password
     };
     
-    logMessage(`Enviando credenciales directamente al background: ${usuario} @ ${sitio}`, 'info', true);
+    logMessage('Enviando credenciales al background script...', 'info', true);
     
-    // Enviar mensaje al background para guardar las credenciales
-    chrome.runtime.sendMessage({
-      accion: 'guardar_credenciales', // Usar "accion" en lugar de "action" para mantener coherencia
+    // Enviar la credencial con la nueva estructura
+    sendMessageSafely({
+      action: 'guardar_credenciales',
       credencial: credencial
-    }, function(response) {
-      try {
-        if (chrome.runtime.lastError) {
-          logMessage(`Error de comunicación: ${chrome.runtime.lastError.message}`, 'error', true);
-          mostrarNotificacion(false, 'Error de comunicación con la extensión');
-          return;
+    })
+    .then(resultado => {
+      if (resultado && resultado.success) {
+        logMessage('Credenciales guardadas correctamente', 'success', true);
+        mostrarNotificacion(true, 'Credenciales guardadas correctamente');
+        return true;
+      } else if (resultado) {
+        logMessage(`Error al guardar credenciales: ${resultado.error}`, 'error', true);
+        
+        // Si el error es de autenticación, mostrar diálogo de login
+        if (resultado.requiresAuth) {
+          logMessage('Se requiere autenticación, mostrando popup de login', 'warn', true);
+          sendMessageSafely({ action: 'show_login_popup' });
         }
         
-        logMessage(`Respuesta recibida: ${JSON.stringify(response)}`, 'info', true);
-        
-        if (response && response.success) {
-          logMessage('Credenciales guardadas correctamente en Firebase', 'success', true);
-          mostrarNotificacion(true, 'Contraseña guardada correctamente');
-        } else {
-          const errorMsg = response && response.error ? response.error : 'Error desconocido';
-          
-          // Formateo de mensajes de error para mejor comprensión del usuario
-          let mensajeUsuario = errorMsg;
-          
-          if (errorMsg.includes('no autenticado') || errorMsg.includes('Usuario no autenticado')) {
-            mensajeUsuario = 'Debes iniciar sesión para guardar contraseñas';
-            
-            // Intentar mostrar el popup de login
-            setTimeout(() => {
-              chrome.runtime.sendMessage({ action: 'show_login_popup' });
-            }, 1000);
-          } else if (errorMsg.includes('Firebase no disponible')) {
-            mensajeUsuario = 'No se pudo conectar con el servidor. Verifica tu conexión a internet.';
-          } else if (errorMsg.includes('permisos')) {
-            mensajeUsuario = 'No tienes permisos para guardar contraseñas. Contacta al administrador.';
-          }
-          
-          logMessage(`Error al guardar credenciales: ${errorMsg}`, 'error', true);
-          mostrarNotificacion(false, mensajeUsuario);
-        }
-      } catch (e) {
-        logMessage(`Error al procesar respuesta: ${e.message}`, 'error', true);
-        mostrarNotificacion(false, 'Error al procesar la respuesta');
+        mostrarNotificacion(false, resultado.error || 'Error al guardar credenciales');
+        return false;
+      } else {
+        logMessage('No se recibió respuesta al guardar credenciales', 'error', true);
+        mostrarNotificacion(false, 'Error de comunicación al guardar credenciales');
+        return false;
       }
+    })
+    .catch(error => {
+      logMessage(`Error al guardar credenciales: ${error}`, 'error', true);
+      mostrarNotificacion(false, 'Error al guardar credenciales: ' + error.message);
+      return false;
     });
+    
+    return true; // Indicar que el proceso comenzó correctamente
   } catch (e) {
-    logMessage(`Error general al guardar credenciales: ${e.message}`, 'error', true);
-    mostrarNotificacion(false, 'Error inesperado al guardar credenciales');
+    logMessage(`Error general al guardar credenciales: ${e}`, 'error', true);
+    mostrarNotificacion(false, 'Error al procesar credenciales');
+    return false;
   }
 }
 
@@ -2460,7 +2661,7 @@ function mostrarNotificacion(exito, mensaje = '') {
     }
     
     // Crear nueva notificación
-    const notificacion = document.createElement('div');
+  const notificacion = document.createElement('div');
     notificacion.id = 'passwd-notificacion';
     
     // Estilo base
@@ -2521,12 +2722,12 @@ function mostrarNotificacion(exito, mensaje = '') {
     notificacion.appendChild(icono);
     notificacion.appendChild(contenido);
     notificacion.appendChild(cerrar);
-    
-    // Añadir al DOM
-    document.body.appendChild(notificacion);
-    
+  
+  // Añadir al DOM
+  document.body.appendChild(notificacion);
+  
     // Mostrar con animación
-    setTimeout(() => {
+  setTimeout(() => {
       notificacion.style.opacity = '1';
       notificacion.style.transform = 'translateY(0)';
     }, 10);
@@ -2539,10 +2740,10 @@ function mostrarNotificacion(exito, mensaje = '') {
         setTimeout(() => {
           if (document.body.contains(notificacion)) {
             notificacion.remove();
-          }
-        }, 300);
       }
-    }, 5000);
+    }, 300);
+      }
+  }, 5000);
     
     // Guardar registro del resultado
     logMessage(`Notificación mostrada: ${mensajeTexto}`, exito ? 'success' : 'error');
@@ -2784,3 +2985,393 @@ function initContent() {
     console.error('Error en inicialización de content script:', e);
   }
 }
+
+/**
+ * Determina si un formulario parece ser de inicio de sesión basado en sus características
+ * @param {HTMLFormElement} formulario - El formulario a analizar
+ * @returns {boolean} - Verdadero si parece ser un formulario de inicio de sesión
+ */
+function parecerFormularioLogin(formulario) {
+  if (!formulario || !(formulario instanceof HTMLFormElement)) {
+    return false;
+  }
+
+  // Obtener todos los campos del formulario
+  const inputs = formulario.querySelectorAll('input');
+  if (inputs.length === 0) return false;
+
+  // Contar tipos de campos relevantes
+  let tienePassword = false;
+  let tieneUsuario = false;
+  let tieneCamposTexto = 0;
+  let tieneBotonSubmit = false;
+  let camposOcultos = 0;
+  let camposTotales = 0;
+
+  // Palabras clave que sugieren un campo de usuario
+  const usuarioKeywords = ['user', 'email', 'mail', 'nombre', 'usuario', 'login', 'account', 'id'];
+  
+  // Palabras clave que sugieren un botón de login
+  const loginButtonKeywords = ['login', 'iniciar', 'acceder', 'entrar', 'ingresar', 'sign in', 'acceso'];
+
+  // Analizar cada input en el formulario
+  inputs.forEach(input => {
+    const type = input.type.toLowerCase();
+    const name = (input.name || '').toLowerCase();
+    const id = (input.id || '').toLowerCase();
+    const placeholder = (input.placeholder || '').toLowerCase();
+    
+    camposTotales++;
+    
+    if (type === 'password') {
+      tienePassword = true;
+    } 
+    else if (type === 'text' || type === 'email') {
+      tieneCamposTexto++;
+      
+      // Verificar si parece un campo de usuario
+      const atributos = [name, id, placeholder];
+      for (const keyword of usuarioKeywords) {
+        if (atributos.some(attr => attr.includes(keyword))) {
+          tieneUsuario = true;
+          break;
+        }
+      }
+    } 
+    else if (type === 'submit') {
+      tieneBotonSubmit = true;
+    } 
+    else if (type === 'hidden') {
+      camposOcultos++;
+    }
+  });
+
+  // Buscar también botones que no sean inputs
+  const botones = formulario.querySelectorAll('button');
+  botones.forEach(boton => {
+    const texto = boton.textContent.toLowerCase();
+    const tipo = (boton.getAttribute('type') || '').toLowerCase();
+    
+    if (tipo === 'submit' || !tipo) {
+      tieneBotonSubmit = true;
+      
+      // Si el texto del botón contiene palabras clave de login, es un indicio fuerte
+      for (const keyword of loginButtonKeywords) {
+        if (texto.includes(keyword)) {
+          tieneBotonSubmit = true;
+          break;
+        }
+      }
+    }
+  });
+
+  // Verificar si la URL o el formulario contienen palabras clave relacionadas con login
+  const formAction = (formulario.action || '').toLowerCase();
+  const formId = (formulario.id || '').toLowerCase();
+  const formClass = (formulario.className || '').toLowerCase();
+  const currentUrl = window.location.href.toLowerCase();
+  
+  const loginUrlKeywords = ['login', 'signin', 'account', 'session', 'acceso', 'acceder', 'iniciar'];
+  const tieneLoginEnURL = loginUrlKeywords.some(keyword => 
+    currentUrl.includes(keyword) || 
+    formAction.includes(keyword) || 
+    formId.includes(keyword) || 
+    formClass.includes(keyword)
+  );
+
+  // Heurísticas para detectar si es un formulario de login
+  const esFormularioSimple = camposTotales <= 6 && camposOcultos <= 3;
+  const tieneCamposMinimos = tienePassword;
+  const tieneIndiciosDeLogin = tieneUsuario || tieneLoginEnURL || (tieneCamposTexto === 1 && tienePassword);
+  
+  // Algunas páginas no usan botones submit sino JavaScript
+  const tieneFormaDeEnvio = tieneBotonSubmit || formulario.querySelector('[onclick]');
+  
+  // Registrar en log para depuración si cumple condiciones mínimas
+  if (tienePassword) {
+    logMessage('Análisis de posible formulario login: ' + 
+      JSON.stringify({
+        url: window.location.href,
+        tienePassword,
+        tieneUsuario,
+        tieneCamposTexto,
+        tieneBotonSubmit,
+        esFormularioSimple,
+        tieneIndiciosDeLogin,
+        tieneLoginEnURL
+      }), 'info', DEBUG_MODE);
+  }
+  
+  // Decidir si es un formulario de login basado en las heurísticas
+  return tieneCamposMinimos && tieneIndiciosDeLogin && esFormularioSimple && tieneFormaDeEnvio;
+}
+
+// Manejador para mostrar mensaje que requiere login
+function mostrarMensajeLoginRequerido(mensaje = 'Es necesario iniciar sesión para acceder a tus credenciales') {
+  try {
+    // Eliminar cualquier mensaje previo
+    const mensajeExistente = document.getElementById('passwd-login-required-message');
+    if (mensajeExistente) {
+      mensajeExistente.remove();
+    }
+
+    // Crear el contenedor principal
+    const mensajeContainer = document.createElement('div');
+    mensajeContainer.id = 'passwd-login-required-message';
+    mensajeContainer.style.position = 'fixed';
+    mensajeContainer.style.top = '50%';
+    mensajeContainer.style.left = '50%';
+    mensajeContainer.style.transform = 'translate(-50%, -50%)';
+    mensajeContainer.style.backgroundColor = 'rgba(20, 20, 20, 0.95)';
+    mensajeContainer.style.color = '#fff';
+    mensajeContainer.style.padding = '24px';
+    mensajeContainer.style.borderRadius = '12px';
+    mensajeContainer.style.maxWidth = '350px';
+    mensajeContainer.style.width = '90%';
+    mensajeContainer.style.textAlign = 'center';
+    mensajeContainer.style.boxShadow = '0 8px 32px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(128, 0, 255, 0.15)';
+    mensajeContainer.style.zIndex = '999999999';
+    mensajeContainer.style.fontFamily = '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif';
+    mensajeContainer.style.backdropFilter = 'blur(20px)';
+    mensajeContainer.style.border = '1px solid rgba(128, 0, 255, 0.1)';
+    mensajeContainer.style.animation = 'passwd-fade-in 0.3s cubic-bezier(0.2, 0.8, 0.2, 1)';
+
+    // Logo y encabezado
+    const header = document.createElement('div');
+    header.style.marginBottom = '20px';
+    header.style.display = 'flex';
+    header.style.flexDirection = 'column';
+    header.style.alignItems = 'center';
+
+    // Icono SVG
+    const iconSvg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#bb86fc" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0 0 3px rgba(187, 134, 252, 0.5)); margin-bottom: 12px;">
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+        <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+      </svg>
+    `;
+    
+    header.innerHTML = iconSvg;
+
+    // Título
+    const titulo = document.createElement('h2');
+    titulo.textContent = 'PASSWD';
+    titulo.style.fontSize = '24px';
+    titulo.style.fontWeight = '600';
+    titulo.style.marginBottom = '16px';
+    titulo.style.background = 'linear-gradient(135deg, #6a11cb, #8a3bd8, #bb86fc)';
+    titulo.style.webkitBackgroundClip = 'text';
+    titulo.style.webkitTextFillColor = 'transparent';
+    titulo.style.backgroundSize = '300% 300%';
+    titulo.style.animation = 'passwd-gradient 8s ease infinite';
+    header.appendChild(titulo);
+
+    // Crear el CSS para las animaciones
+    const animationStyle = document.createElement('style');
+    animationStyle.textContent = `
+      @keyframes passwd-fade-in {
+        from { opacity: 0; transform: translate(-50%, -45%); }
+        to { opacity: 1; transform: translate(-50%, -50%); }
+      }
+      @keyframes passwd-gradient {
+        0% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
+      }
+      @keyframes passwd-pulse {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.05); }
+        100% { transform: scale(1); }
+      }
+    `;
+    mensajeContainer.appendChild(animationStyle);
+
+    // Mensaje
+    const mensajeTexto = document.createElement('p');
+    mensajeTexto.textContent = mensaje;
+    mensajeTexto.style.fontSize = '14px';
+    mensajeTexto.style.marginBottom = '20px';
+    mensajeTexto.style.lineHeight = '1.5';
+    mensajeTexto.style.color = 'rgba(255, 255, 255, 0.8)';
+
+    // Botón de inicio de sesión
+    const botonLogin = document.createElement('button');
+    botonLogin.textContent = 'Iniciar sesión';
+    botonLogin.style.background = 'linear-gradient(135deg, #6a11cb, #8a3bd8)';
+    botonLogin.style.color = 'white';
+    botonLogin.style.border = 'none';
+    botonLogin.style.padding = '12px 24px';
+    botonLogin.style.borderRadius = '8px';
+    botonLogin.style.cursor = 'pointer';
+    botonLogin.style.fontWeight = '600';
+    botonLogin.style.fontSize = '14px';
+    botonLogin.style.transition = 'all 0.3s ease';
+    botonLogin.style.boxShadow = '0 4px 15px rgba(128, 0, 255, 0.3)';
+    botonLogin.style.display = 'inline-block';
+    botonLogin.style.marginTop = '10px';
+    botonLogin.style.position = 'relative';
+    botonLogin.style.overflow = 'hidden';
+    
+    // Hover y active para el botón
+    botonLogin.onmouseover = function() {
+      this.style.background = 'linear-gradient(135deg, #7b21dc, #9b4ce9)';
+      this.style.transform = 'translateY(-2px)';
+      this.style.boxShadow = '0 6px 20px rgba(128, 0, 255, 0.4)';
+    };
+    
+    botonLogin.onmouseout = function() {
+      this.style.background = 'linear-gradient(135deg, #6a11cb, #8a3bd8)';
+      this.style.transform = 'translateY(0)';
+      this.style.boxShadow = '0 4px 15px rgba(128, 0, 255, 0.3)';
+    };
+    
+    botonLogin.onmousedown = function() {
+      this.style.transform = 'translateY(1px)';
+      this.style.boxShadow = '0 2px 8px rgba(128, 0, 255, 0.2)';
+    };
+
+    // Evento para el botón
+    botonLogin.addEventListener('click', function() {
+      mensajeContainer.style.opacity = '0';
+      mensajeContainer.style.transform = 'translate(-50%, -45%)';
+      mensajeContainer.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+      
+      setTimeout(() => {
+        // Intenta abrir la página de login de la extensión
+        chrome.runtime.sendMessage({ action: 'open_login_page' });
+        mensajeContainer.remove();
+      }, 300);
+    });
+
+    // Botón para cerrar
+    const closeButton = document.createElement('div');
+    closeButton.innerHTML = '&times;';
+    closeButton.style.position = 'absolute';
+    closeButton.style.top = '10px';
+    closeButton.style.right = '12px';
+    closeButton.style.fontSize = '20px';
+    closeButton.style.color = 'rgba(255, 255, 255, 0.5)';
+    closeButton.style.cursor = 'pointer';
+    closeButton.style.transition = 'color 0.3s ease';
+    
+    closeButton.onmouseover = function() {
+      this.style.color = 'rgba(255, 255, 255, 0.8)';
+    };
+    
+    closeButton.onmouseout = function() {
+      this.style.color = 'rgba(255, 255, 255, 0.5)';
+    };
+    
+    closeButton.addEventListener('click', function() {
+      mensajeContainer.style.opacity = '0';
+      mensajeContainer.style.transform = 'translate(-50%, -45%)';
+      mensajeContainer.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+      
+      setTimeout(() => {
+        mensajeContainer.remove();
+      }, 300);
+    });
+
+    // Ensamblar todo
+    mensajeContainer.appendChild(header);
+    mensajeContainer.appendChild(mensajeTexto);
+    mensajeContainer.appendChild(botonLogin);
+    mensajeContainer.appendChild(closeButton);
+    document.body.appendChild(mensajeContainer);
+    
+    // Añadir evento para cerrar al hacer clic fuera
+    document.addEventListener('click', function clickOutside(e) {
+      if (!mensajeContainer.contains(e.target)) {
+        mensajeContainer.style.opacity = '0';
+        mensajeContainer.style.transform = 'translate(-50%, -45%)';
+        mensajeContainer.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+        
+        setTimeout(() => {
+          mensajeContainer.remove();
+          document.removeEventListener('click', clickOutside);
+        }, 300);
+      }
+    });
+    
+    // Mantener visible por un tiempo mínimo antes de permitir cerrar haciendo clic fuera
+    setTimeout(() => {
+      // Ya se puede cerrar al hacer clic fuera
+    }, 1000);
+    
+  } catch (error) {
+    console.error('Error al mostrar mensaje de login requerido:', error);
+  }
+}
+
+// Configurar listener para mensajes del background
+chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
+  // Log para debugging
+  logMessage('Mensaje recibido en content script: ' + message.accion || message.action);
+  
+  try {
+    // Normalizar el nombre de la acción (para compatibilidad)
+    const accion = message.accion || message.action;
+    
+    switch (accion) {
+      case 'rellenar':
+        // Rellenar formulario con los datos recibidos
+        rellenarFormulario(message.datos);
+        sendResponse({success: true});
+        break;
+        
+      case 'check_ready':
+        // Verificar si el content script está listo
+        sendResponse({ready: true});
+        break;
+        
+      case 'get_available_credentials':
+        // Obtener credenciales disponibles en el content script
+        logMessage('Enviando credenciales disponibles al popup');
+        sendResponse({credenciales: credencialesDisponibles || []});
+        break;
+        
+      case 'set_credentials':
+        // Recibir credenciales desde el popup o background
+        if (message.credenciales && message.credenciales.length > 0) {
+          logMessage(`Recibidas ${message.credenciales.length} credenciales desde el popup/background`);
+          credencialesDisponibles = message.credenciales;
+          sendResponse({success: true});
+        } else {
+          logMessage('No se recibieron credenciales válidas');
+          sendResponse({success: false, error: 'No hay credenciales válidas'});
+        }
+        break;
+        
+      case 'mostrar_login_error':
+        // Mostrar mensaje de error de autenticación
+        mostrarNotificacion(false, message.error || 'Error de autenticación');
+        sendResponse({success: true});
+        break;
+        
+      case 'mostrar_login_requerido':
+        // Mostrar mensaje que requiere login
+        mostrarMensajeLoginRequerido(message.mensaje);
+        sendResponse({success: true});
+        break;
+        
+      default:
+        logMessage(`Acción desconocida: ${accion}`);
+        sendResponse({success: false, error: 'Acción no reconocida'});
+    }
+  } catch (e) {
+    console.error('Error procesando mensaje en content script:', e);
+    sendResponse({success: false, error: e.message});
+  }
+  
+  return true; // Importante para permitir respuestas asíncronas
+});
+
+// También recibimos credenciales desde el background script
+chrome.runtime.onMessage.addListener((message) => {
+  if (message && message.action === 'credentials_update') {
+    if (message.credentials && Array.isArray(message.credentials)) {
+      credencialesDisponibles = message.credentials;
+      logMessage(`DEBUG: Credenciales actualizadas desde background: ${credencialesDisponibles.length} disponibles`, 'info', true);
+    }
+  }
+});

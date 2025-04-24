@@ -3,29 +3,144 @@
 <head>
   <meta charset="UTF-8">
   <title>PASSWD - Iniciar sesión</title>
+  <script src="firebase/firebase-app-compat.js"></script>
+  <script src="firebase/firebase-auth-compat.js"></script>
+  <script src="firebase/firebase-firestore-compat.js"></script>
   <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-      width: 350px;
-      padding: 16px;
+    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
+    
+    * {
+      box-sizing: border-box;
       margin: 0;
-      background-color: #212121;
+      padding: 0;
+    }
+    
+    body {
+      font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', sans-serif;
+      width: 350px;
+      padding: 24px;
+      margin: 0;
+      background: linear-gradient(135deg, #121212 0%, #1e1e1e 100%);
       color: #fff;
+      overflow: hidden;
+      position: relative;
+    }
+    
+    body:before {
+      content: '';
+      position: absolute;
+      top: -50%;
+      left: -50%;
+      width: 200%;
+      height: 200%;
+      background: radial-gradient(circle, rgba(106, 17, 203, 0.05) 0%, transparent 50%);
+      z-index: -1;
+      animation: pulse-bg 15s infinite alternate;
+    }
+    
+    @keyframes pulse-bg {
+      0% { transform: translate(0, 0); }
+      100% { transform: translate(-10%, -10%); }
     }
     
     .login-container {
       display: flex;
       flex-direction: column;
       align-items: center;
+      animation: fadeIn 0.7s cubic-bezier(0.2, 0.8, 0.2, 1);
+      position: relative;
+      z-index: 1;
+    }
+    
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    
+    .logo-container {
+      margin-bottom: 20px;
+      position: relative;
+      width: 90px;
+      height: 90px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    .logo {
+      width: 70px;
+      height: 70px;
+      border-radius: 16px;
+      object-fit: cover;
+      box-shadow: 0 4px 20px rgba(128, 0, 255, 0.3);
+      transition: all 0.3s ease;
+      position: relative;
+      z-index: 2;
+    }
+    
+    .logo:hover {
+      transform: scale(1.05);
+      box-shadow: 0 6px 25px rgba(128, 0, 255, 0.4);
+    }
+    
+    .logo-pulse {
+      position: absolute;
+      width: 90px;
+      height: 90px;
+      border-radius: 18px;
+      background: rgba(128, 0, 255, 0.15);
+      animation: pulse 2.5s infinite;
+    }
+    
+    .logo-pulse:after {
+      content: '';
+      position: absolute;
+      top: -5px;
+      left: -5px;
+      right: -5px;
+      bottom: -5px;
+      border-radius: 22px;
+      background: rgba(128, 0, 255, 0.05);
+      animation: pulse 2.5s infinite 0.6s;
+    }
+    
+    @keyframes pulse {
+      0% { transform: scale(0.95); opacity: 0.7; }
+      50% { transform: scale(1.05); opacity: 0.3; }
+      100% { transform: scale(0.95); opacity: 0.7; }
     }
     
     h1 {
-      font-size: 24px;
+      font-size: 32px;
       color: #fff;
-      margin-bottom: 20px;
+      margin-bottom: 32px;
       text-align: center;
-      font-weight: 600;
+      font-weight: 700;
       letter-spacing: 0.5px;
+      background: linear-gradient(135deg, #6a11cb, #8a3bd8, #bb86fc);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-size: 300% 300%;
+      animation: gradient 8s ease infinite;
+      position: relative;
+    }
+    
+    h1:after {
+      content: '';
+      position: absolute;
+      width: 40px;
+      height: 3px;
+      background: linear-gradient(90deg, #6a11cb, #bb86fc);
+      bottom: -10px;
+      left: 50%;
+      transform: translateX(-50%);
+      border-radius: 2px;
+    }
+    
+    @keyframes gradient {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
     }
     
     #loginForm {
@@ -33,91 +148,345 @@
     }
     
     .input-group {
-      margin-bottom: 15px;
+      margin-bottom: 24px;
+      position: relative;
+    }
+    
+    .input-group label {
+      position: absolute;
+      left: 16px;
+      top: 16px;
+      color: rgba(255, 255, 255, 0.6);
+      font-size: 14px;
+      transition: all 0.3s ease;
+      pointer-events: none;
+      opacity: 0.7;
+      z-index: 1;
+    }
+    
+    .input-group input:focus ~ label,
+    .input-group input:valid ~ label {
+      top: -10px;
+      left: 12px;
+      font-size: 12px;
+      color: #bb86fc;
+      opacity: 1;
+      font-weight: 500;
+    }
+    
+    .input-group input:focus ~ .input-icon svg,
+    .input-group input:valid ~ .input-icon svg {
+      stroke: #bb86fc;
+      transform: scale(1.1);
+    }
+    
+    .input-icon {
+      position: absolute;
+      right: 16px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: rgba(255, 255, 255, 0.3);
+      transition: all 0.3s ease;
+      z-index: 1;
     }
     
     input {
       width: 100%;
-      padding: 12px;
-      border-radius: 6px;
-      border: 1px solid #444;
-      background-color: #333;
+      padding: 16px 16px;
+      border-radius: 14px;
+      border: 2px solid rgba(128, 0, 255, 0.15);
+      background-color: rgba(20, 20, 20, 0.5);
       color: #fff;
-      font-size: 14px;
+      font-size: 16px;
       box-sizing: border-box;
+      transition: all 0.3s ease;
+      font-family: 'Poppins', sans-serif;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
     }
     
     input:focus {
       outline: none;
-      border-color: #4285F4;
+      border-color: #8a3bd8;
+      box-shadow: 0 0 0 3px rgba(128, 0, 255, 0.2), 0 4px 15px rgba(0, 0, 0, 0.2);
+      background-color: rgba(25, 25, 25, 0.7);
+      transform: translateY(-2px);
+    }
+    
+    .btn-container {
+      width: 100%;
+      position: relative;
+      margin-top: 14px;
+      overflow: hidden;
+      border-radius: 14px;
+      z-index: 1;
     }
     
     button {
-      background-color: #4285F4;
+      background: linear-gradient(135deg, #6a11cb, #8a3bd8);
       color: white;
-      padding: 12px 16px;
+      padding: 16px;
       border: none;
-      border-radius: 6px;
+      border-radius: 14px;
       cursor: pointer;
       width: 100%;
-      margin-top: 15px;
       font-weight: 600;
       letter-spacing: 0.5px;
       text-transform: uppercase;
-      font-size: 14px;
-      transition: all 0.2s ease;
-      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+      font-size: 16px;
+      transition: all 0.4s ease;
+      box-shadow: 0 4px 15px rgba(128, 0, 255, 0.4);
+      position: relative;
+      overflow: hidden;
+      font-family: 'Poppins', sans-serif;
+      z-index: 0;
+    }
+    
+    button:before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: -100%;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+      transition: all 0.5s ease;
+      z-index: -1;
     }
     
     button:hover {
-      background-color: #5294FF;
-      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);
-      transform: translateY(-1px);
+      transform: translateY(-3px);
+      box-shadow: 0 8px 25px rgba(128, 0, 255, 0.5);
+      background: linear-gradient(135deg, #7b21dc, #9b4ce9);
+    }
+    
+    button:hover:before {
+      left: 100%;
+    }
+    
+    button:active {
+      transform: translateY(1px);
+      box-shadow: 0 2px 10px rgba(128, 0, 255, 0.4);
+      background: linear-gradient(135deg, #5a01bb, #7a2bc8);
+    }
+    
+    .create-account {
+      margin-top: 20px;
+      text-align: center;
+      font-size: 14px;
+      color: rgba(255, 255, 255, 0.6);
+    }
+    
+    .create-account a {
+      color: #bb86fc;
+      text-decoration: none;
+      font-weight: 600;
+      transition: all 0.3s ease;
+    }
+    
+    .create-account a:hover {
+      color: #b06eff;
+      text-decoration: underline;
     }
     
     .error-message {
+      background-color: rgba(232, 99, 99, 0.15);
+      border-left: 3px solid #e86363;
       color: #e86363;
-      margin-top: 10px;
-      text-align: center;
+      margin-top: 16px;
+      padding: 12px 16px;
+      border-radius: 10px;
+      text-align: left;
       font-size: 14px;
+      transform: translateY(-10px);
+      opacity: 0;
+      transition: all 0.3s ease;
+      display: flex;
+      align-items: center;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      max-height: 0;
+      overflow: hidden;
+    }
+    
+    .error-message::before {
+      content: "";
+      display: inline-block;
+      width: 18px;
+      height: 18px;
+      margin-right: 10px;
+      background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="%23e86363" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>');
+      background-repeat: no-repeat;
+      background-size: contain;
+      flex-shrink: 0;
+    }
+    
+    .error-message.show {
+      transform: translateY(0);
+      opacity: 1;
+      max-height: 100px;
+      margin-bottom: 10px;
     }
     
     .loader {
-      border: 3px solid #333;
-      border-top: 3px solid #4285F4;
-      border-radius: 50%;
-      width: 24px;
-      height: 24px;
-      animation: spin 1.5s linear infinite;
-      margin: 15px auto;
+      display: inline-block;
+      position: relative;
+      width: 40px;
+      height: 40px;
+      margin: 20px auto;
       display: none;
     }
     
-    @keyframes spin {
+    .loader div {
+      box-sizing: border-box;
+      display: block;
+      position: absolute;
+      width: 32px;
+      height: 32px;
+      margin: 4px;
+      border: 3px solid rgba(128, 0, 255, 0.3);
+      border-radius: 50%;
+      animation: loader 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+      border-color: #bb86fc transparent transparent transparent;
+    }
+    
+    .loader div:nth-child(1) {
+      animation-delay: -0.45s;
+    }
+    
+    .loader div:nth-child(2) {
+      animation-delay: -0.3s;
+    }
+    
+    .loader div:nth-child(3) {
+      animation-delay: -0.15s;
+    }
+    
+    @keyframes loader {
       0% { transform: rotate(0deg); }
       100% { transform: rotate(360deg); }
     }
+    
+    .checkbox-group {
+      margin-top: 10px;
+      display: flex;
+      align-items: center;
+      margin-bottom: 5px;
+      position: relative;
+    }
+    
+    .checkbox-group input[type="checkbox"] {
+      width: auto;
+      margin-right: 10px;
+      accent-color: #bb86fc;
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+    }
+    
+    .checkbox-group label {
+      color: rgba(255, 255, 255, 0.75);
+      font-size: 14px;
+      position: static;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    
+    .checkbox-group:hover label {
+      color: rgba(255, 255, 255, 0.9);
+    }
+    
+    .hint-text {
+      margin-top: 5px;
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.4);
+      text-align: right;
+    }
+    
+    .hint-text a {
+      color: #bb86fc;
+      text-decoration: none;
+      transition: all 0.3s ease;
+    }
+    
+    .hint-text a:hover {
+      color: #b06eff;
+      text-decoration: underline;
+    }
   </style>
+  <script src="login.js" defer></script>
 </head>
 <body>
   <div class="login-container">
-    <h1>PASSWD Extension</h1>
+    <div class="logo-container">
+      <div class="logo-pulse"></div>
+      <img src="icons/logo_passwd.JPEG" alt="PASSWD Logo" class="logo" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2270%22 height=%2270%22><rect width=%2270%22 height=%2270%22 fill=%22%236a11cb%22 /><text x=%2235%22 y=%2248%22 font-size=%2242%22 text-anchor=%22middle%22 fill=%22white%22>P</text></svg>'">
+    </div>
+    <h1>PASSWD</h1>
+    
     <form id="loginForm">
       <div class="input-group">
-        <input type="email" id="email" placeholder="Correo electrónico" required>
+        <input type="email" id="email" required>
+        <label for="email">Correo electrónico</label>
+        <div class="input-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+            <polyline points="22,6 12,13 2,6"></polyline>
+          </svg>
+        </div>
       </div>
+      
       <div class="input-group">
-        <input type="password" id="password" placeholder="Contraseña" required>
+        <input type="password" id="password" required>
+        <label for="password">Contraseña</label>
+        <div class="input-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+        </div>
       </div>
-      <button type="submit" id="loginButton">Iniciar sesión</button>
+      
+      <div class="checkbox-group">
+        <input type="checkbox" id="rememberPassword" checked>
+        <label for="rememberPassword">Guardar contraseña</label>
+      </div>
+      
+      <div class="btn-container">
+        <button type="submit" id="loginButton">Iniciar sesión</button>
+      </div>
+      
+      <div class="loader" id="loader">
+        <div></div>
+        <div></div>
+        <div></div>
+        <div></div>
+      </div>
+      
+      <div class="error-message" id="errorMessage"></div>
     </form>
-    <div id="errorMessage" class="error-message"></div>
-    <div class="loader" id="loader"></div>
+
+    <!-- Mensaje de carga -->
+    <div id="loadingMessage" style="display: none; text-align: center; margin-top: 15px; color: #bb86fc;">
+      <p>Conectando con el servicio...</p>
+    </div>
   </div>
-  
-  <!-- Firebase Scripts -->
-  <script src="firebase/firebase-app-compat.js"></script>
-  <script src="firebase/firebase-auth-compat.js"></script>
-  <script src="login.js"></script>
+
+  <!-- Script para mostrar mensaje mientras se cargan los recursos -->
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      // Mostrar mensaje de carga
+      document.getElementById('loadingMessage').style.display = 'block';
+      
+      // Verificar si Firebase se ha cargado correctamente
+      setTimeout(function() {
+        if (typeof firebase === 'undefined') {
+          const errorMsg = document.getElementById('errorMessage');
+          errorMsg.textContent = 'Error: No se pudo cargar Firebase. Por favor, recarga la página.';
+          errorMsg.classList.add('show');
+        } else {
+          document.getElementById('loadingMessage').style.display = 'none';
+        }
+      }, 2000);
+    });
+  </script>
 </body>
 </html>
