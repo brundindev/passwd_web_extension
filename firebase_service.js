@@ -320,7 +320,7 @@ class FirebaseService {
         console.error('Usuario no autenticado en getAllCredentials');
         return [];
       }
-
+      
       console.log(`Consultando credenciales para usuario: ${user.email} (${user.uid})`);
       console.log('Consultando estructura: usuarios/{userId}/pass/{documentId}');
       

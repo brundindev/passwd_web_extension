@@ -329,8 +329,31 @@ function addStyleSafely() {
         }
       `;
 
+      // Intentar añadir al head si existe
+      if (document.head) {
         document.head.appendChild(style);
-        estilosAñadidos = true;
+      } 
+      // Si no hay head, intentar añadir al documentElement
+      else if (document.documentElement) {
+        // Crear elemento head si no existe
+        const head = document.createElement('head');
+        document.documentElement.appendChild(head);
+        head.appendChild(style);
+      }
+      // Si todo falla, añadir al body como último recurso
+      else if (document.body) {
+        document.body.appendChild(style);
+      }
+      // Si ni siquiera hay body, esperar y reintentar
+      else {
+        if (intento < maxIntentos) {
+          console.log(`No se encontró lugar para añadir estilos, reintentando (intento ${intento + 1}/${maxIntentos})...`);
+          setTimeout(() => intentarAñadirEstilos(intento + 1), 500);
+          return;
+        }
+      }
+
+      estilosAñadidos = true;
       console.log('Estilos de PASSWD añadidos correctamente');
     } catch (e) {
       console.error('Error al añadir estilos:', e);
@@ -441,14 +464,14 @@ function mostrarDesplegableCredenciales(targetElement, credenciales = null, mens
     dropdown.className = 'passwd-credentials-dropdown';
 
     // Añadir encabezado con icono
-    const header = document.createElement('div');
-    header.className = 'passwd-dropdown-header';
-    
+      const header = document.createElement('div');
+      header.className = 'passwd-dropdown-header';
+      
     // Icono de llave (SVG)
     const iconSvg = `
       <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#bb86fc" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0 0 3px rgba(187, 134, 252, 0.5));">
         <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path>
-      </svg>
+        </svg>
     `;
     
     // Título con icono
@@ -469,7 +492,7 @@ function mostrarDesplegableCredenciales(targetElement, credenciales = null, mens
       errorMsg.className = 'passwd-credential-error';
       errorMsg.textContent = mensaje;
       credentialsContainer.appendChild(errorMsg);
-    } else {
+      } else {
       logMessage(`Mostrando desplegable con ${credencialesDisponibles.length} credenciales`, 'info', true);
       
       // Realizar un log detallado de las credenciales disponibles para diagnóstico
@@ -540,8 +563,8 @@ function mostrarDesplegableCredenciales(targetElement, credenciales = null, mens
 
     // Añadir al DOM con efecto de aparición
     document.body.appendChild(dropdown);
-    desplegableVisible = true;
-    
+          desplegableVisible = true;
+          
     // Aplicar animación de entrada
     dropdown.style.opacity = '0';
     dropdown.style.transform = 'translateY(-10px)';
@@ -567,14 +590,14 @@ function mostrarDesplegableCredenciales(targetElement, credenciales = null, mens
         setTimeout(() => {
           if (document.body.contains(dropdown)) {
             dropdown.remove();
-            desplegableVisible = false;
-          }
+              desplegableVisible = false;
+            }
         }, 300);
         
         document.removeEventListener('click', closeDropdown);
       }
     });
-  } catch (error) {
+      } catch (error) {
     console.error("Error al mostrar desplegable:", error);
     // Intento de solución de emergencia
     try {
@@ -589,7 +612,7 @@ function mostrarDesplegableCredenciales(targetElement, credenciales = null, mens
       emergencyDiv.textContent = `Error al mostrar credenciales: ${error.message}`;
       document.body.appendChild(emergencyDiv);
       setTimeout(() => emergencyDiv.remove(), 5000);
-    } catch (e) {
+  } catch (e) {
       // Si todo falla, al menos mostrar por consola
       console.error("Error crítico al mostrar credenciales:", e);
     }
@@ -2068,16 +2091,48 @@ function detectarEnvioFormularios() {
 }
 
 // Función para mostrar el diálogo preguntando si quiere guardar las credenciales
-function mostrarDialogoGuardarCredenciales(credenciales) {
-  // Evitar que se muestre si ya hay un diálogo visible
-  if (document.getElementById('passwd-dialog')) {
-    console.log("[PASSWD] Ya existe un diálogo. No se creará otro.");
-    return;
-  }
-  
-  console.log("[PASSWD] Mostrando diálogo para guardar credenciales:", credenciales);
-
+function mostrarDialogoGuardarCredenciales(sitio, usuario, password) {
   try {
+    // Normalizar los argumentos
+    const credenciales = {
+      sitio: sitio,
+      usuario: usuario,
+      contraseña: password
+    };
+    
+    // Verificar que tenemos documento y body
+    if (!document || !document.body) {
+      logMessage('DOM no disponible, esperando para mostrar diálogo...', 'warn', true);
+      
+      // Intentar de nuevo cuando el DOM esté listo
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+          setTimeout(() => mostrarDialogoGuardarCredenciales(sitio, usuario, password), 500);
+        });
+      } else {
+        // Si el documento ya debería estar cargado pero no tenemos body
+        setTimeout(() => mostrarDialogoGuardarCredenciales(sitio, usuario, password), 1000);
+      }
+      return;
+    }
+    
+    // Evitar que se muestre si ya hay un diálogo visible
+    if (document.getElementById('passwd-dialog') || document.getElementById('passwd-extension-dialog')) {
+      console.log("[PASSWD] Ya existe un diálogo. No se creará otro.");
+      return;
+    }
+    
+    console.log("[PASSWD] Mostrando diálogo para guardar credenciales:", credenciales);
+
+    // Comprobamos si hemos mostrado un diálogo recientemente para evitar duplicados
+    const ahora = Date.now();
+    const ultimoDialogo = window.ultimoDialogoPASSWD || 0;
+    if (ahora - ultimoDialogo < 5000) { // 5 segundos
+      console.log("[PASSWD] Se mostró un diálogo hace menos de 5 segundos. Evitando duplicado.");
+      return;
+    }
+    window.ultimoDialogoPASSWD = ahora;
+
     // Intentar mostrar la notificación del sistema primero
     chrome.runtime.sendMessage({
       action: "show_save_notification",
@@ -2088,23 +2143,14 @@ function mostrarDialogoGuardarCredenciales(credenciales) {
       // Si no se pudo mostrar la notificación del sistema o hubo un error, mostrar el diálogo tradicional
       if (!response || !response.success) {
         console.log("[PASSWD] No se pudo mostrar la notificación del sistema, mostrando diálogo tradicional");
-        // Asegurarnos de que document.body existe
-        if (document.body) {
-          setTimeout(() => mostrarDialogoTradicional(credenciales), 500);
-        } else {
-          console.error("[PASSWD] document.body no está disponible para mostrar el diálogo");
-        }
+        setTimeout(() => mostrarDialogoTradicional(credenciales), 500);
       }
     });
   } catch (error) {
     console.error("[PASSWD] Error al intentar mostrar notificación:", error);
     
     // Fallback al diálogo tradicional en caso de error
-    if (document.body) {
-      setTimeout(() => mostrarDialogoTradicional(credenciales), 500);
-    } else {
-      console.error("[PASSWD] document.body no está disponible para mostrar el diálogo");
-    }
+    setTimeout(() => mostrarDialogoTradicional(credenciales), 500);
   }
 }
 
@@ -2115,32 +2161,61 @@ function mostrarDialogoGuardarCredenciales(credenciales) {
 function mostrarDialogoTradicional(credenciales) {
   logMessage('Mostrando diálogo tradicional para guardar credenciales', 'info', true);
   
-  // Prevenir múltiples diálogos
-  if (document.getElementById('passwd-extension-dialog')) {
-    logMessage('Ya hay un diálogo abierto, no se muestra otro', 'warning', true);
+  // Asegurar que document.body existe
+  if (!document || !document.body) {
+    logMessage('Error: document.body no disponible para mostrar diálogo tradicional', 'error', true);
+    
+    // Intentarlo de nuevo si el documento está cargando
+    if (document && document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => {
+        setTimeout(() => mostrarDialogoTradicional(credenciales), 500);
+      });
+    } else {
+      // Si el documento ya debería estar cargado, intentar más tarde
+      setTimeout(() => mostrarDialogoTradicional(credenciales), 1000);
+    }
     return;
   }
 
-  // Asegurar que document.body existe
-  if (!document.body) {
-    logMessage('Error: document.body no disponible', 'error', true);
-    return;
-  }
-  
   try {
+    // Prevenir múltiples diálogos
+    if (document.getElementById('passwd-extension-dialog')) {
+      logMessage('Ya hay un diálogo abierto, no se muestra otro', 'warning', true);
+      return;
+    }
+    
+    // Usar Shadow DOM para evitar conflictos con estilos de la página
+    const hostElement = document.createElement('div');
+    hostElement.id = 'passwd-extension-dialog-host';
+    hostElement.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 2147483647;
+      display: flex;
+      align-items: flex-start;
+      justify-content: flex-end;
+      padding: 20px;
+      box-sizing: border-box;
+      pointer-events: none;
+    `;
+    
+    document.body.appendChild(hostElement);
+    
+    // Crear shadow root con modo cerrado para mayor aislamiento
+    const shadowRoot = hostElement.attachShadow({ mode: 'closed' });
+    
     // Crear el contenedor del diálogo con efectos visuales mejorados
     const dialogContainer = document.createElement('div');
     dialogContainer.id = 'passwd-extension-dialog';
     dialogContainer.style.cssText = `
-    position: fixed;
-    top: 20px;
-    right: 20px;
-    width: 320px;
+      width: 320px;
       max-width: 90vw;
       background: #ffffff;
       border-radius: 12px;
       box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15), 0 3px 10px rgba(0, 0, 0, 0.08);
-    z-index: 2147483647;
       overflow: hidden;
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       transition: all 0.3s cubic-bezier(0.2, 0, 0.2, 1);
@@ -2148,12 +2223,12 @@ function mostrarDialogoTradicional(credenciales) {
       padding: 0;
       opacity: 0;
       transform: translateY(-10px) scale(0.98);
-      backdrop-filter: blur(5px);
+      pointer-events: auto;
     `;
 
-    // Agregar animaciones CSS para efectos visuales
-  const style = document.createElement('style');
-  style.textContent = `
+    // Agregar estilos internos para el shadow DOM
+    const style = document.createElement('style');
+    style.textContent = `
       @keyframes fadeIn {
         from { opacity: 0; transform: translateY(-10px) scale(0.98); }
         to { opacity: 1; transform: translateY(0) scale(1); }
@@ -2174,10 +2249,9 @@ function mostrarDialogoTradicional(credenciales) {
       @keyframes shimmerButton {
         0% { background-position: -100px; }
         100% { background-position: 200px; }
-    }
-  `;
-  document.head.appendChild(style);
-  
+      }
+    `;
+    
     // Crear la cabecera del diálogo
     const dialogHeader = document.createElement('div');
     dialogHeader.style.cssText = `
@@ -2416,10 +2490,12 @@ function mostrarDialogoTradicional(credenciales) {
     dialogContainer.appendChild(dialogHeader);
     dialogContainer.appendChild(dialogBody);
     
-    document.body.appendChild(dialogContainer);
+    // Añadir al shadow DOM
+    shadowRoot.appendChild(style);
+    shadowRoot.appendChild(dialogContainer);
     
     // Activar la animación de aparición
-      setTimeout(() => {
+    setTimeout(() => {
       dialogContainer.style.opacity = '1';
       dialogContainer.style.transform = 'translateY(0) scale(1)';
     }, 10);
@@ -2436,11 +2512,8 @@ function mostrarDialogoTradicional(credenciales) {
       dialogContainer.style.transform = 'translateY(-10px) scale(0.98)';
       
       setTimeout(() => {
-        if (dialogContainer.parentNode) {
-          dialogContainer.parentNode.removeChild(dialogContainer);
-        }
-        if (style.parentNode) {
-          style.parentNode.removeChild(style);
+        if (document.body.contains(hostElement)) {
+          document.body.removeChild(hostElement);
         }
       }, 300);
     };
@@ -2559,24 +2632,25 @@ function mostrarDialogoTradicional(credenciales) {
       }
     });
     
-    // Cerrar el diálogo al hacer clic fuera de él (opcional)
-    const clickOutside = (e) => {
-      if (!dialogContainer.contains(e.target) && e.target !== dialogContainer) {
-        document.removeEventListener('click', clickOutside);
-        cerrarDialogo();
-      }
-    };
-    
-    // Activar después de un breve retraso para evitar que se cierre inmediatamente
-    setTimeout(() => {
-      document.addEventListener('click', clickOutside);
-    }, 300);
-    
     logMessage('Diálogo para guardar credenciales creado correctamente', 'success', true);
   } catch (error) {
     logMessage('Error al crear diálogo de guardar credenciales: ' + error.message, 'error', true);
-    // Intentar mostrar una notificación simple como respaldo
-    mostrarNotificacion(false, 'Error al mostrar diálogo: ' + error.message);
+    
+    // Intento de respaldo extremo usando un iframe con confirm nativo
+    try {
+      const iframe = document.createElement('iframe');
+      iframe.style.display = 'none';
+      document.body.appendChild(iframe);
+      const result = iframe.contentWindow.confirm(`¿Quieres guardar la contraseña para ${credenciales.usuario} en ${credenciales.sitio}?`);
+      
+      if (result) {
+        guardarCredenciales(credenciales.sitio, credenciales.usuario, credenciales.contraseña);
+      }
+      
+      document.body.removeChild(iframe);
+    } catch (finalError) {
+      console.error('Error en intento de respaldo:', finalError);
+    }
   }
 }
 
@@ -2817,21 +2891,46 @@ function setupLoginFieldsDetection() {
 
 // Función para inicializar los componentes
 function initialize() {
-  logMessage('Inicializando content script PASSWD...', 'info');
-  
-  // Notificar al background que el content script está listo
-  notifyReady();
-  
-  // Configurar detección de formularios
-  detectarEnvioFormularios();
-  
-  // Añadir estilos necesarios
-  addStyleSafely();
-  
-  // Configurar detección de campos de login
-  setupLoginFieldsDetection();
-  
-  // Otros aspectos de inicialización...
+  try {
+    logMessage('Inicializando content script PASSWD...', 'info');
+    
+    // Verificar si el documento está listo
+    if (document.readyState === 'loading') {
+      // Si el documento está cargando, esperar a que termine
+      logMessage('Documento en carga, esperando a que esté listo...', 'info');
+      document.addEventListener('DOMContentLoaded', () => {
+        logMessage('DOMContentLoaded disparado, continuando inicialización...', 'info');
+        initializeComponents();
+      });
+    } else {
+      // Si el documento ya está cargado, inicializar inmediatamente
+      logMessage('Documento ya cargado, inicializando componentes...', 'info');
+      initializeComponents();
+    }
+  } catch (e) {
+    console.error('Error crítico en inicialización:', e);
+  }
+}
+
+// Función para inicializar los componentes cuando el documento esté listo
+function initializeComponents() {
+  try {
+    // Notificar al background que el content script está listo
+    notifyReady();
+    
+    // Añadir estilos necesarios
+    addStyleSafely();
+    
+    // Configurar detección de campos de login
+    setupLoginFieldsDetection();
+    
+    // Configurar detección de formularios
+    setTimeout(detectarEnvioFormularios, 1000);
+    
+    logMessage('Componentes inicializados correctamente', 'success', true);
+  } catch (e) {
+    console.error('Error al inicializar componentes:', e);
+  }
 }
 
 // Llamar a la inicialización
@@ -2937,12 +3036,15 @@ function initContent() {
   try {
     logMessage('Inicializando content script de PASSWD...', 'info', true);
     
+    // Variable para forzar el diálogo de prueba (activar para depuración)
+    const FORZAR_DIALOGO_PRUEBA = false;
+    
     // Verificar si estamos en un dominio de Google
     const esGoogle = window.location.hostname.includes('google.com') || 
                      window.location.hostname.includes('gmail.com');
     
-    if (esGoogle) {
-      logMessage('Sitio de Google detectado, activando modo específico para Google', 'info', true);
+    if (esGoogle || FORZAR_DIALOGO_PRUEBA) {
+      logMessage('Sitio de Google detectado o diálogo forzado, activando modo específico', 'info', true);
     }
 
     // Añadir estilos CSS para nuestros componentes
@@ -2957,8 +3059,8 @@ function initContent() {
     // Intentar detectar campos de login
     setTimeout(añadirIconosACamposLogin, 1000);
     
-    // Si estamos en Google, forzar la comprobación de credenciales
-    if (esGoogle) {
+    // Si estamos en Google o se fuerza el diálogo, mostrar el diálogo de prueba
+    if (esGoogle || FORZAR_DIALOGO_PRUEBA) {
       setTimeout(() => {
         logMessage('Forzando comprobación de credenciales en sitio Google', 'info', true);
         
@@ -2969,8 +3071,8 @@ function initContent() {
         // Forzar la activación del diálogo de guardar credenciales
         logMessage('Forzando mostrar diálogo de guardar credenciales para pruebas', 'info', true);
         
-        // Sólo mostrar el diálogo si no hay uno visible ya
-        if (!window.passwdDialogShowing) {
+        // Sólo mostrar el diálogo si no hay uno visible ya y se activa la depuración
+        if (!window.passwdDialogShowing && (FORZAR_DIALOGO_PRUEBA || esGoogle)) {
           mostrarDialogoGuardarCredenciales(testUrl, testUser, 'contraseña-prueba');
         }
       }, 3000);

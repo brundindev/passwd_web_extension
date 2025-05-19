@@ -58,24 +58,24 @@ document.addEventListener('DOMContentLoaded', function() {
   
   // Función para inicializar Firebase
   function initializeFirebase() {
-    try {
-      if (!firebase.apps.length) {
-        firebase.initializeApp(firebaseConfig);
-      }
-      console.log('Firebase inicializado correctamente');
+  try {
+    if (!firebase.apps.length) {
+      firebase.initializeApp(firebaseConfig);
+    }
+    console.log('Firebase inicializado correctamente');
       
       // Una vez inicializado, continuar con la configuración
       setupAuthAndForm();
-    } catch (e) {
-      console.error('Error al inicializar Firebase:', e);
+  } catch (e) {
+    console.error('Error al inicializar Firebase:', e);
       showError('Error al inicializar el sistema de autenticación. Por favor, intenta de nuevo más tarde.');
     }
   }
   
   // Configurar autenticación y formulario después de inicializar Firebase
   function setupAuthAndForm() {
-    // Comprobar si ya hay sesión iniciada
-    checkAuthState();
+  // Comprobar si ya hay sesión iniciada
+  checkAuthState();
     
     // Establecer persistencia en el navegador (no en el Service Worker)
     try {
@@ -106,8 +106,8 @@ document.addEventListener('DOMContentLoaded', function() {
         loginFormContainer.style.display = 'block';
       });
     }
-    
-    // Manejar envío del formulario
+  
+  // Manejar envío del formulario
     loginForm.addEventListener('submit', handleLoginSubmit);
   }
   
@@ -129,7 +129,7 @@ document.addEventListener('DOMContentLoaded', function() {
     loginButton.disabled = true;
     errorMessage.textContent = '';
     errorMessage.classList.remove('show');
-
+    
     // Intentar iniciar sesión directamente primero para garantizar persistencia en esta ventana
     firebase.auth().signInWithEmailAndPassword(email, password)
       .then((userCredential) => {
@@ -155,7 +155,7 @@ document.addEventListener('DOMContentLoaded', function() {
             password: debeGuardarCredenciales ? password : null
           }, function(response) {
             console.log('[Login] Estado sincronizado con background:', response);
-            
+          
             // Esperar un tiempo para asegurar que todo se ha sincronizado
             setTimeout(() => {
               // Verificar el estado de autenticación antes de redirigir
@@ -291,7 +291,7 @@ document.addEventListener('DOMContentLoaded', function() {
           window.location.href = 'popup.html';
         }, 500);
       });
-    });
+  });
   }
   
   // Reiniciar estado de login
@@ -343,19 +343,19 @@ document.addEventListener('DOMContentLoaded', function() {
             window.location.href = 'popup.html';
           } else {
             console.log('[Login] Inconsistencia: Autenticado en Firebase pero no en storage');
-            
-            // Guardar estado en storage
-            chrome.storage.local.set({ 
-              'userAuthenticated': true,
-              'userEmail': user.email,
+        
+        // Guardar estado en storage
+        chrome.storage.local.set({ 
+          'userAuthenticated': true,
+          'userEmail': user.email,
               'userId': user.uid,
               'lastAuthTime': Date.now()
-            }, () => {
+        }, () => {
               console.log('[Login] Estado actualizado en storage');
-              
+          
               // Redirigir
-              chrome.action.setPopup({ popup: 'popup.html' });
-              window.location.href = 'popup.html';
+          chrome.action.setPopup({ popup: 'popup.html' });
+          window.location.href = 'popup.html';
             });
           }
         });
@@ -381,7 +381,7 @@ document.addEventListener('DOMContentLoaded', function() {
               console.log('[Login] No hay credenciales guardadas para auto-login');
               
               // Limpiar el estado inconsistente
-              chrome.storage.local.set({ 'userAuthenticated': false });
+        chrome.storage.local.set({ 'userAuthenticated': false });
             }
           } else {
             console.log('[Login] Usuario no autenticado ni en Firebase ni en storage');

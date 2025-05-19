@@ -228,7 +228,7 @@ document.addEventListener('DOMContentLoaded', function() {
   // Función para verificar si el content script tiene credenciales disponibles
   async function getCredentialsFromContentScript(tabId) {
     return new Promise((resolve) => {
-      try {
+    try {
         chrome.tabs.sendMessage(tabId, { accion: 'get_available_credentials' }, (response) => {
           if (chrome.runtime.lastError) {
             console.log('Error al obtener credenciales del content script:', chrome.runtime.lastError.message);
@@ -236,11 +236,11 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
           }
           
-          if (response && response.credenciales && response.credenciales.length > 0) {
-            console.log(`Content script tiene ${response.credenciales.length} credenciales`);
+      if (response && response.credenciales && response.credenciales.length > 0) {
+        console.log(`Content script tiene ${response.credenciales.length} credenciales`);
             resolve(response.credenciales);
-          } else {
-            console.log('Content script no tiene credenciales disponibles');
+      } else {
+        console.log('Content script no tiene credenciales disponibles');
             resolve(null);
           }
         });
@@ -250,10 +250,10 @@ document.addEventListener('DOMContentLoaded', function() {
           console.log('Timeout al esperar respuesta del content script');
           resolve(null);
         }, 1500);
-      } catch (error) {
-        console.log('Error al obtener credenciales del content script:', error.message);
+    } catch (error) {
+      console.log('Error al obtener credenciales del content script:', error.message);
         resolve(null);
-      }
+    }
     });
   }
   
@@ -277,17 +277,17 @@ document.addEventListener('DOMContentLoaded', function() {
       if (!isContentScriptReady) {
         console.log('Content script no está listo, se intentará obtener credenciales directamente del background script');
       } else {
-        // Primero verificar si el content script ya tiene credenciales
-        const contentScriptCredenciales = await getCredentialsFromContentScript(currentTab.id);
-        if (contentScriptCredenciales && contentScriptCredenciales.length > 0) {
-          console.log(`Usando ${contentScriptCredenciales.length} credenciales del content script`);
-          
-          // Mostrar las credenciales del content script
-          showCredentialsList(contentScriptCredenciales);
-          showStatus(`Se encontraron ${contentScriptCredenciales.length} credenciales para este sitio`, 'success');
-          showLoader(false);
-          return;
-        }
+      // Primero verificar si el content script ya tiene credenciales
+      const contentScriptCredenciales = await getCredentialsFromContentScript(currentTab.id);
+      if (contentScriptCredenciales && contentScriptCredenciales.length > 0) {
+        console.log(`Usando ${contentScriptCredenciales.length} credenciales del content script`);
+        
+        // Mostrar las credenciales del content script
+        showCredentialsList(contentScriptCredenciales);
+        showStatus(`Se encontraron ${contentScriptCredenciales.length} credenciales para este sitio`, 'success');
+        showLoader(false);
+        return;
+      }
       }
       
       // Si no hay credenciales en el content script o no está listo, obtenemos directamente del background
@@ -428,9 +428,9 @@ document.addEventListener('DOMContentLoaded', function() {
       }
       
       try {
-        chrome.tabs.sendMessage(currentTab.id, {
+      chrome.tabs.sendMessage(currentTab.id, {
           accion: 'update_available_credentials',
-          credenciales: credenciales
+        credenciales: credenciales
         }, (response) => {
           if (chrome.runtime.lastError) {
             console.warn(`Error al enviar credenciales (intento ${intentos}):`, chrome.runtime.lastError);
@@ -455,7 +455,7 @@ document.addEventListener('DOMContentLoaded', function() {
         setTimeout(() => {
           intentarEnviar(intentos + 1);
         }, 300 * Math.pow(2, intentos));
-      }
+        }
     }
     
     // Iniciar el intento de envío
@@ -897,7 +897,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (response && response.success) {
               // Manejar múltiples posibilidades de nombres de propiedades
               const credencialesArray = response.credentials || response.credenciales || [];
-              
+          
               // Asegurar formato consistente para todas las credenciales
               const credencialesNormalizadas = credencialesArray.map(cred => ({
                 id: cred.id || `cred_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -917,19 +917,19 @@ document.addEventListener('DOMContentLoaded', function() {
               
               showStatus(`Se encontraron ${credencialesNormalizadas.length} credenciales`, 'success');
               resolve(credencialesNormalizadas);
-            } else {
+          } else {
               console.log('No se encontraron credenciales o hubo un error:', response);
               showStatus(response?.message || 'No se encontraron credenciales', 'warning');
               resolve([]);
-            }
+          }
           }
         );
       });
-    } catch (error) {
+      } catch (error) {
       console.error('Error al buscar credenciales:', error);
       showStatus(`Error al buscar: ${error.message}`, 'error');
       showLoader(false);
       return [];
     }
   }
-});
+  });
